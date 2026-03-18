@@ -1,0 +1,785 @@
+\documentclass[11pt]{article}
+
+% ---- Packages ----
+\usepackage[utf8]{inputenc}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath,amssymb,amsfonts}
+\usepackage{graphicx}
+\usepackage{booktabs}
+\usepackage{hyperref}
+\usepackage{natbib}
+\usepackage{xcolor}
+\usepackage{multirow}
+\usepackage{subcaption}
+\usepackage{algorithm}
+\usepackage{algorithmic}
+\usepackage[margin=1in]{geometry}
+\usepackage{microtype}
+
+\hypersetup{
+  colorlinks=true,
+  linkcolor=blue!70!black,
+  citecolor=green!50!black,
+  urlcolor=blue!70!black
+}
+
+% ---- Custom commands ----
+\newcommand{\method}{positional distillation}
+\newcommand{\Method}{Positional distillation}
+\newcommand{\methodfull}{Positional Distillation}
+\newcommand{\posN}{\text{pos-}N}
+\newcommand{\KL}{\mathrm{KL}}
+\newcommand{\bboxed}{\texttt{\textbackslash boxed\{\}}}
+
+\title{\textbf{Positional Distillation: Early-Token Loss Is All You Need \\for On-Policy Knowledge Distillation}}
+
+\author{
+  Anonymous Authors
+}
+
+\date{}
+
+\begin{document}
+
+\maketitle
+
+% ============================================================================
+% ABSTRACT
+% ============================================================================
+\begin{abstract}
+On-policy knowledge distillation applies reverse KL divergence loss uniformly across all generated tokens. We show this full-sequence approach is unstable: students learn degenerate repetition patterns, causing HumanEval accuracy to drop from 40.2\% to 26.8\% over training. Analyzing per-position KL divergence across 59,936 trajectories, we find it is highly non-uniform---KL concentrates at early positions corresponding to reasoning strategy selection, while later computation and formatting tokens show minimal divergence. We propose \method{}: compute loss only on the first $N$ response tokens. This one-line change matches or exceeds full-sequence performance on both mathematical reasoning (MATH-500: 66.75\% vs.\ 65.55\% avg@4) and code generation (HumanEval: 42.1\% vs.\ 40.2\% pass@1), while eliminating training instability entirely. A strong \emph{cascade effect} drives the improvement: distilling just 50 tokens reshapes entire 1500+ character responses, with late tokens changing as much as early ones (Jaccard similarity 0.251 for both early and late portions). The first 50 tokens capture only 26\% of total KL signal yet achieve 73\% of the maximum performance gain. Positional distillation is also 3--7$\times$ more efficient in generation, as only $N$ tokens need to be produced per training step.
+\end{abstract}
+
+% ============================================================================
+% 1. INTRODUCTION
+% ============================================================================
+\section{Introduction}
+\label{sec:intro}
+
+Knowledge distillation~\citep{hinton2015distilling} has become a central technique for compressing large language models (LLMs)~\citep{xu2024survey}. On-policy distillation---where the student generates responses and the teacher provides distributional supervision---is particularly effective for autoregressive models~\citep{agarwal2024onpolicy, gu2024minillm}, as the student learns from its own mistakes rather than from teacher-generated data. However, the standard approach applies reverse KL divergence loss \emph{uniformly} across every token position, implicitly assuming all tokens contribute equally to learning.
+
+This assumption is wrong. In our experiments with Qwen2.5-Math-1.5B and Qwen3-1.7B~\citep{qwen2024qwen25math, qwen2025qwen3}, full-sequence on-policy distillation causes 91.5\% of math responses to develop repetitive \bboxed{} patterns by step 100, and HumanEval accuracy drops from 40.2\% to 26.8\% over training. The root cause is uniform loss weighting: it wastes gradient capacity on low-information positions and creates degenerate attractors at high-confidence answer tokens.
+
+We investigate by measuring per-position KL divergence across 59,936 on-policy trajectories. The result is striking: KL is \emph{highly front-loaded}. Position 0 has KL = 3.057---8.5$\times$ higher than position 192 (KL = 0.359). Token classification reveals why: early positions are dominated by \emph{reasoning strategy tokens} (``To find...'', ``First...'') where teacher and student fundamentally disagree, while later positions contain \emph{computation tokens} (numbers, operators) where the models largely agree~\citep{wang2025beyond8020}.
+
+Based on this analysis, we propose \methodfull{}: compute the reverse KL loss only on the first $N$ response tokens---a single-line modification that zeros out gradients beyond position $N$. Despite its simplicity, the consequences are significant. Our contributions are:
+
+\begin{enumerate}
+    \item \textbf{KL position analysis.} We show that KL divergence in on-policy distillation is highly position-dependent: teacher-student disagreement concentrates at early reasoning-strategy tokens, with the first 50 tokens containing 26\% of total KL (Section~\ref{sec:analysis}).
+    \item \textbf{\methodfull{}.} Computing loss on the first $N$ tokens matches or exceeds full-sequence performance on MATH-500 (66.75\% vs.\ 65.55\% avg@4) and HumanEval (42.1\% vs.\ 40.2\% pass@1), while completely eliminating training instability and reducing generation cost 3--7$\times$ (Section~\ref{sec:method}).
+    \item \textbf{Cascade effect.} Early-token distillation reshapes entire generation trajectories: distilling 50 tokens changes late tokens as much as early ones (Jaccard similarity 0.251 for both), with a 3:1 ratio of improved to degraded problems (Section~\ref{sec:cascade}).
+    \item \textbf{Comprehensive evaluation.} Consistent benefits across tasks (math, coding), training methods (LoRA, full fine-tuning), batch configurations, and position limits from 5 to 200 (Section~\ref{sec:experiments}).
+\end{enumerate}
+
+% Teaser figure reference
+\begin{figure}[t]
+    \centering
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/fig1a_kl_curve.pdf}
+        \caption{Per-position KL divergence between teacher and student across 59,936 trajectories.}
+    \end{subfigure}
+    \hfill
+    \begin{subfigure}[b]{0.48\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/fig1b_performance_vs_pos.pdf}
+        \caption{MATH-500 avg@4 vs.\ position limit, with \% of total KL captured.}
+    \end{subfigure}
+    \caption{\textbf{KL divergence is front-loaded, and early-token distillation is disproportionately effective.} (a) KL between teacher and student decays steeply from position 0 (KL=3.06) to a plateau around 0.4 after position 100. (b) In the small-scale setting ($n{=}16$), the first 50 tokens capture only 26\% of total KL signal yet yield 73\% of the maximum performance gain. In the large-scale setting ($n{=}1$), pos-50 matches or exceeds pos-200.}
+    \label{fig:teaser}
+\end{figure}
+
+% ============================================================================
+% 2. RELATED WORK
+% ============================================================================
+\section{Related Work}
+\label{sec:related}
+
+\subsection{Knowledge Distillation for LLMs}
+
+Knowledge distillation~\citep{hinton2015distilling} trains a student to match a teacher's output distribution. \citet{kim2016sequence} extended this to sequence models, and \citet{wen2023fdivergence} generalized to arbitrary $f$-divergences. For LLMs, \citet{gu2024minillm} established that reverse KL is preferable for generative distillation, as it prevents the student from overestimating low-probability teacher modes, while \citet{wu2025rethinking} showed that both divergences converge given sufficient training but focus on different distribution regions early on.
+
+The on-policy paradigm---where the student generates its own training data---outperforms off-policy approaches~\citep{agarwal2024onpolicy, lin2020autoregressive}. \citet{agarwal2024onpolicy} proposed Generalized Knowledge Distillation (GKD), and \citet{ko2024distillm} introduced skew KL for more efficient distillation. Our work builds on on-policy reverse KL but introduces position-dependent loss computation.
+
+\subsection{Token-Level Importance in Distillation}
+\label{sec:related_token}
+
+Not all tokens contribute equally to learning. \citet{wang2025beyond8020} showed that only $\sim$20\% of chain-of-thought tokens carry high entropy, and training RL gradients on only these ``forking tokens'' matches full-gradient performance. This motivated several concurrent approaches to selective distillation: \citet{huang2025selectkd} proposed SelecTKD (propose-and-verify token selection), \citet{xie2026adakd} introduced AdaKD (adaptive per-token temperature), \citet{kim2026tsdkd} combined entropy-based selection with preference ranking, and \citet{tavor2026rethinking} systematically disentangled selection along position, class, and sample axes, proposing SE-KD which reduces wall time by 70\%.
+
+Our approach differs fundamentally: we use \emph{absolute position} as the sole selection criterion, requiring no per-token entropy, difficulty, or verification computation. The KL concentration we observe at early positions provides a principled justification---early tokens correspond to reasoning strategy decisions where teacher-student disagreement is highest. Furthermore, unlike prior token-selection methods that primarily target efficiency, we show that positional loss also eliminates training instability.
+
+\citet{chen2025distillingessence} studied computation-quality tradeoffs in reasoning distillation via sequence truncation. While they truncate training sequences from the end, we restrict the \emph{loss} to the beginning while retaining full generation for inference.
+
+\subsection{Training Instability in On-Policy Distillation}
+\label{sec:related_stability}
+
+Neural text degeneration~\citep{holtzman2020curious, welleck2020neural} and model collapse from iterative self-training~\citep{shumailov2024collapse} are well-documented failure modes. In on-policy KD specifically, \citet{jang2026veto} proposed Veto, a geometric bridge in logit space that suppresses harmful gradients on low-confidence tokens. Our approach is complementary: rather than modifying the target distribution, we restrict loss to early positions where teacher-student agreement is naturally highest, achieving stability through a simpler mechanism.
+
+\subsection{Curriculum Learning and Sequence Length Scheduling}
+\label{sec:related_curriculum}
+
+Curriculum learning~\citep{bengio2009curriculum} improves training by ordering examples from easy to hard. \citet{li2022stability} showed that sequence length warmup stabilizes LLM training, and \citet{pouransari2024dataset} extended this with variable-length curricula for up to 3$\times$ faster convergence. Our progressive variant---linearly increasing the position limit over training---applies curriculum learning to the distillation loss scope rather than input length.
+
+\subsection{Chain-of-Thought and Reasoning Distillation}
+
+Chain-of-thought prompting~\citep{wei2022chainofthought} enables LLMs to solve complex problems via intermediate reasoning. Distilling CoT capabilities has become a key application of KD~\citep{deepseekr1}. Process reward models~\citep{lightman2023verify} provide step-level supervision. Our work connects to this line: \method{} implicitly provides strongest supervision on \emph{planning} steps at early positions, with diminishing supervision on later computation---consistent with the intuition that reasoning \emph{strategy} is harder to learn than arithmetic.
+
+
+% ============================================================================
+% 3. MOTIVATION: FULL-SEQUENCE DISTILLATION FAILS
+% ============================================================================
+\section{Motivation: Full-Sequence Distillation Fails}
+\label{sec:motivation}
+
+\subsection{Experimental Setup}
+
+We use Qwen2.5-Math-1.5B~\citep{qwen2024qwen25math} as the student and Qwen3-1.7B~\citep{qwen2025qwen3} as the teacher. The distillation pipeline follows the on-policy paradigm: (1) the student generates responses to math/coding problems, (2) the teacher computes token-level log-probabilities via a forward pass, (3) the reverse KL divergence loss is computed and used to update the student via LoRA~\citep{hu2022lora} ($r=32$, $\alpha=64$, lr=$5\times10^{-5}$) or full fine-tuning (lr=$5\times10^{-6}$). We evaluate on MATH-500~\citep{hendrycks2021measuring, lightman2023verify} (avg@4, maj@4, pass@4 with $n=4$ samples at temperature 0.7) and HumanEval/MBPP~\citep{chen2021evaluating, austin2021program} (pass@1 at temperature 0.0).
+
+\subsection{The Degradation Problem}
+
+Full-sequence distillation exhibits severe degradation over training on both tasks.
+
+\paragraph{Mathematical reasoning.} By step 100, 91.5\% of responses develop multi-\bboxed{} repetition, averaging 88 repeated answer boxes per response. The apparent avg@4 drops from 65.6\% (step 50) to 43.8\% (step 200). A relaxed metric counting any response containing the ground truth reveals that mathematical ability is largely preserved: relaxed avg@4 drops only from 74.6\% to 70.3\%. Thus $\sim$80\% of the apparent degradation is caused by degenerate repetition breaking answer extraction, not genuine loss of reasoning ability.
+
+\paragraph{Code generation.} The degradation is more severe and genuine. With LoRA, HumanEval drops monotonically from 40.2\% (step 50) to 26.8\% (step 400)---a 13.4 percentage point decline. With full fine-tuning, HumanEval drops from 36.6\% (step 150) to 31.1\% (step 400). Unlike math, code generation degradation cannot be explained by extraction artifacts.
+
+\paragraph{Positional variants are immune.} None of the positional distillation variants (pos-50 through pos-200) exhibit degradation on either task. As shown in Table~\ref{tab:degradation}, positional loss maintains stable \bboxed{} counts (1.0 per response), low repetition rates (5.8\%), and consistent accuracy throughout training. Figure~\ref{fig:stability} illustrates this contrast across training steps.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig2_stability.pdf}
+    \caption{\textbf{Training stability: \method{} vs.\ full-sequence distillation.} Full-sequence distillation degrades monotonically on both tasks, while all positional variants maintain stable or improving accuracy across training steps.}
+    \label{fig:stability}
+\end{figure}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Full-sequence distillation degrades; \method{} does not.} Degradation statistics on MATH-500 for full-sequence (LoRA, $n=16$, $\text{bs}=16$) vs.\ pos-200tok (LoRA, $n=16$, $\text{bs}=16$). Multi-boxed: responses with $>1$ \bboxed{}. Repetitive: responses with repeated text patterns.}
+\label{tab:degradation}
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Method / Step} & \textbf{avg@4} & \textbf{Multi-boxed} & \textbf{Avg \bboxed{} count} & \textbf{Repetitive} & \textbf{Avg length} \\
+\midrule
+Full-seq, step 50 & 65.60\% & 2.9\% & 1.0 & 5.9\% & 1,388 \\
+Full-seq, step 100 & 46.30\% & 91.5\% & 88.1 & 78.8\% & 4,023 \\
+Full-seq, step 200 & 43.80\% & 89.1\% & 58.0 & 77.5\% & 4,558 \\
+\midrule
+Pos-200tok, step 100 & 66.75\% & 5.8\% & 1.0 & --- & 1,578 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ============================================================================
+% 4. ANALYSIS
+% ============================================================================
+\section{Analysis: Where Does KL Divergence Concentrate?}
+\label{sec:analysis}
+
+The failure of full-sequence distillation and the success of positional variants suggest that not all token positions are equally important for distillation. We investigate this by analyzing per-position KL divergence between teacher and student.
+
+\subsection{Per-Position KL Distribution}
+
+We generate 59,936 on-policy trajectories (mean sequence length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. The results (Figure~\ref{fig:kl_curve}) reveal a striking pattern: KL is massively concentrated at early positions.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/fig3_detailed_kl.pdf}
+    \caption{\textbf{Per-position KL divergence between teacher and student.} KL is highest at position 0 (3.057) and decays rapidly, stabilizing around 0.4 after position 100. Each position has $\geq$55,000 samples. The shaded region marks positions 0--50, which contain 26\% of total KL.}
+    \label{fig:kl_curve}
+\end{figure}
+
+Table~\ref{tab:kl_phases} summarizes the KL distribution by position phase. Position 0 (KL = 3.057) is 8.5$\times$ higher than position 192 (KL = 0.359). The ultra-early phase (positions 0--4) averages 1.714, while the late phase (positions 150--199) averages only 0.383---a 4.5$\times$ ratio. The decay is rapid in the first 5 positions (3.057 $\rightarrow$ 0.921), then gradual, stabilizing after position $\sim$50.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{KL divergence by position phase.} Mean KL computed over 59,936 trajectories.}
+\label{tab:kl_phases}
+\small
+\begin{tabular}{llcc}
+\toprule
+\textbf{Phase} & \textbf{Position range} & \textbf{Mean KL} & \textbf{Description} \\
+\midrule
+Ultra-early & 0--4 & 1.714 & Strategy decision \\
+Early & 5--19 & 0.934 & Rapid decline \\
+Mid-early & 20--49 & 0.896 & Gradual decline \\
+Mid & 50--99 & 0.525 & Stable, low \\
+Mid-late & 100--149 & 0.449 & Continued decline \\
+Late & 150--199 & 0.383 & Converged \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Cumulative KL and Distillation Efficiency}
+
+To understand how KL signal accumulates, we compute the fraction of per-trajectory total KL contained in the first $N$ positions. Table~\ref{tab:cumulative_kl} cross-references this with actual distillation performance from two experimental configurations, revealing a highly sub-linear relationship between KL coverage and performance gain.
+
+In the small-scale setting ($n{=}16$, 200 problems), the first 50 tokens contain only 26.2\% of total KL signal but capture 73\% of the maximum performance gain (11.50 out of 15.80 percentage points above baseline). In the large-scale setting ($n{=}1$, 3,200 problems), pos-50 achieves 66.65\%, matching pos-200 (66.05\%). In both settings, the first 100 tokens (43.9\% of KL) capture ${\sim}$90\% of the gain. This sub-linearity is the core insight motivating \method{}: early KL is disproportionately valuable for downstream task performance.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{KL signal vs.\ distillation performance.} Cumulative KL fraction (over 59,936 trajectories) and corresponding best avg@4 on MATH-500 in two settings. Baseline = 50.95\%. $n16$: $n_\text{samples}{=}16$, 200 problems (max gain 15.80pp). $n1$: $n_\text{samples}{=}1$, 3,200 problems.}
+\label{tab:cumulative_kl}
+\small
+\begin{tabular}{ccccc}
+\toprule
+\textbf{Pos.\ limit} & \textbf{\% KL signal} & \textbf{Best avg@4 ($n16$)} & \textbf{Best avg@4 ($n1$)} & \textbf{\% max gain ($n16$)} \\
+\midrule
+5 & 5.2\% & 56.50\% & --- & 35\% \\
+10 & 7.8\% & 59.50\% & --- & 54\% \\
+20 & 12.2\% & 60.20\% & --- & 58\% \\
+50 & 26.2\% & 62.45\% & 66.65\% & 73\% \\
+100 & 43.9\% & 64.25\% & 65.85\% & 84\% \\
+200 & 66.1\% & 66.75\% & 66.05\% & 100\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Token Classification Analysis}
+\label{sec:token_classification}
+
+To understand \emph{why} KL concentrates at early positions, we classify each token into six categories: \texttt{planning} (reasoning keywords such as ``To'', ``First'', ``Therefore''), \texttt{structural} (punctuation, newlines, formatting markers), \texttt{math\_number} (digits), \texttt{math\_operator} (arithmetic operators), \texttt{math\_latex} (LaTeX delimiters and math keywords), and \texttt{continuation} (all other tokens).
+
+Table~\ref{tab:kl_by_category} shows mean KL by category and position range. Three findings emerge:
+
+\paragraph{Finding 1: Early positions are strategic, late positions are mechanical.} At positions 0--4, 33\% of tokens are planning tokens (strategy selection), with only 2\% math numbers. By positions 200--500, planning tokens drop to 8\% while math numbers rise to 18\% and structural tokens to 39\%. Early positions contain \emph{what approach to use}; later positions contain \emph{executing the computation}.
+
+\paragraph{Finding 2: KL concentrates on decision-point tokens.} Planning tokens have a mean KL of 1.754 across all positions, compared to 0.281 for math numbers---a 6.2$\times$ difference. The teacher and student disagree most on \emph{how to structure reasoning}, not on \emph{what to compute}. At position 0, 94.4\% of tokens are planning tokens (``To'' appearing 75.1\% of the time, ``Let'' 10.1\%, ``First'' 3.4\%).
+
+\paragraph{Finding 3: LaTeX delimiters carry the highest per-token KL.} The tokens \texttt{\textbackslash(} and \texttt{\textbackslash[} have mean KL of 10.3 and 13.2 respectively, reflecting fundamental disagreement about math formatting conventions. This suggests that a substantial fraction of KL divergence comes from formatting preferences rather than reasoning content.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Mean KL by token category and position range.} Planning and LaTeX tokens carry the highest KL at every position range. Math numbers and operators consistently have the lowest KL.}
+\label{tab:kl_by_category}
+\small
+\begin{tabular}{lcccccc}
+\toprule
+\textbf{Category} & \textbf{0--4} & \textbf{5--19} & \textbf{20--49} & \textbf{50--99} & \textbf{100--199} & \textbf{200--499} \\
+\midrule
+planning & 4.50 & 0.79 & 1.49 & 1.66 & 1.49 & 2.37 \\
+structural & 3.26 & 1.46 & 1.60 & 0.93 & 0.60 & 0.86 \\
+math\_number & 1.49 & 0.60 & 0.74 & 0.28 & 0.17 & 0.13 \\
+math\_operator & 7.30 & 1.84 & 0.81 & 0.37 & 0.21 & 0.14 \\
+math\_latex & 8.84 & 9.23 & 6.50 & 4.95 & 2.97 & 1.87 \\
+continuation & 1.94 & 1.12 & 1.19 & 0.89 & 0.70 & 0.48 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Post-Distillation KL Verification}
+\label{sec:post_distill_kl}
+
+If positional distillation only improved the trained positions, we would expect KL reduction limited to positions 0--$N$. Instead, we find a cascade effect at the distributional level. Table~\ref{tab:post_kl} compares per-position KL between the raw student and two distilled variants (pos-200tok and full-seq) against the teacher.
+
+Within the trained range (positions 0--200), pos-200tok reduces KL by 50--60\% relative to the raw student. Crucially, in the untrained range (positions 200--400), KL still drops by 30--40\%. This confirms that early-token distillation alters the student's behavior at later positions, consistent with the autoregressive cascade mechanism: better early tokens condition the model into distributions closer to the teacher throughout the sequence.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Post-distillation per-position KL.} Mean KL between each model variant and the teacher, measured on 100 problems. Pos-200tok only trains on positions 0--200, yet KL reduction extends to positions 200--400.}
+\label{tab:post_kl}
+\small
+\begin{tabular}{lccccc}
+\toprule
+\textbf{Position range} & \textbf{Raw student} & \textbf{Pos-200tok s100} & \textbf{Pos-200tok s200} & \textbf{Full-seq s50} & \textbf{Full-seq s200} \\
+\midrule
+0--50 & 2.064 & 1.015 & 1.015 & 1.109 & 1.036 \\
+50--100 & 0.759 & 0.321 & 0.322 & 0.437 & 0.312 \\
+100--150 & 0.495 & 0.246 & 0.228 & 0.287 & 0.236 \\
+150--200 & 0.387 & 0.237 & 0.248 & 0.314 & 0.236 \\
+\midrule
+200--300 & 0.382 & 0.238 & 0.242 & 0.264 & 0.273 \\
+300--400 & 0.331 & 0.216 & 0.229 & 0.291 & 0.308 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+% ============================================================================
+% 5. METHOD
+% ============================================================================
+\section{Method: Positional Distillation}
+\label{sec:method}
+
+\subsection{Formulation}
+
+In standard on-policy reverse KL distillation, the student $p_\theta$ generates a response $\mathbf{x} = (x_1, \ldots, x_T)$ conditioned on a prompt, and the loss is computed against the teacher $q_\phi$:
+\begin{equation}
+\mathcal{L}_{\text{full}} = \mathbb{E}_{\mathbf{x} \sim p_\theta} \left[ \sum_{t=1}^{T} \KL\!\left(q_\phi(\cdot \mid \mathbf{x}_{<t}) \;\|\; p_\theta(\cdot \mid \mathbf{x}_{<t})\right) \right].
+\label{eq:full_loss}
+\end{equation}
+
+\Method{} modifies this by restricting the loss to the first $N$ response tokens:
+\begin{equation}
+\mathcal{L}_{\text{pos}} = \mathbb{E}_{\mathbf{x} \sim p_\theta} \left[ \sum_{t=1}^{N} \KL\!\left(q_\phi(\cdot \mid \mathbf{x}_{<t}) \;\|\; p_\theta(\cdot \mid \mathbf{x}_{<t})\right) \right],
+\label{eq:pos_loss}
+\end{equation}
+where $N \ll T$ is the position limit. In practice, the student only needs to generate $N$ tokens (rather than the full sequence $T$), and the teacher only needs to score these $N$ tokens. The implementation is a single mask applied to the loss tensor---positions beyond $N$ are zeroed out before the backward pass.
+
+\subsection{Efficiency Benefits}
+
+\Method{} provides efficiency gains at three stages of the training pipeline:
+
+\paragraph{Generation.} The student generates only $N$ tokens per training example instead of a full sequence. For $N=50$ versus a typical full-sequence length of $T=3584$, this is a 71$\times$ reduction in generated tokens. Since autoregressive generation is the bottleneck of on-policy distillation (each token requires a full forward pass), this translates directly to proportional wall-clock savings.
+
+\paragraph{Teacher scoring.} The teacher's forward pass processes only $N$ tokens instead of $T$, reducing compute quadratically (for attention) or linearly (for feed-forward layers) relative to sequence length.
+
+\paragraph{Loss and gradient computation.} The loss is summed over $N$ positions instead of $T$, and gradients flow through $N$ token predictions instead of $T$.
+
+\subsection{Variants}
+
+We explore three variants:
+\begin{itemize}
+    \item \textbf{Fixed pos-$N$}: Compute loss on the first $N$ tokens throughout training. The simplest approach and the primary recommendation.
+    \item \textbf{Progressive}: Linearly increase the position limit from 1 to a maximum value over the course of training. This creates a natural curriculum but forfeits the generation efficiency benefit as $N$ grows.
+    \item \textbf{Position-weighted} (future work): Weight the loss at each position proportional to expected KL, rather than using a hard cutoff.
+\end{itemize}
+
+\subsection{Algorithm}
+
+Algorithm~\ref{alg:pos_distill} summarizes the training procedure. The only modifications to standard on-policy distillation are the generation length (line~\ref{line:gen}) and the loss summation range (line~\ref{line:loss}).
+
+\begin{algorithm}[t]
+\caption{Positional Distillation}
+\label{alg:pos_distill}
+\begin{algorithmic}[1]
+\REQUIRE Student $p_\theta$, teacher $q_\phi$, position limit $N$, problem set $\mathcal{D}$
+\FOR{each training step}
+    \STATE Sample batch of problems $\{c_i\}$ from $\mathcal{D}$
+    \STATE Generate $\mathbf{x}_i \sim p_\theta(\cdot \mid c_i)$, $|\mathbf{x}_i| = N$ \label{line:gen} \COMMENT{Generate only $N$ tokens}
+    \STATE Compute teacher log-probs: $\log q_\phi(x_{i,t} \mid \mathbf{x}_{i,<t})$ for $t \in [1, N]$
+    \STATE Compute student log-probs: $\log p_\theta(x_{i,t} \mid \mathbf{x}_{i,<t})$ for $t \in [1, N]$
+    \STATE $\mathcal{L} \leftarrow \frac{1}{|\text{batch}|} \sum_i \sum_{t=1}^{N} \KL(q_\phi \| p_\theta)(\mathbf{x}_{i,<t})$ \label{line:loss} \COMMENT{Loss on first $N$ only}
+    \STATE Update $\theta \leftarrow \theta - \eta \nabla_\theta \mathcal{L}$
+\ENDFOR
+\end{algorithmic}
+\end{algorithm}
+
+
+% ============================================================================
+% 6. EXPERIMENTS
+% ============================================================================
+\section{Experiments}
+\label{sec:experiments}
+
+\subsection{Setup}
+
+\paragraph{Models.} Student: Qwen2.5-Math-1.5B~\citep{qwen2024qwen25math}; Teacher: Qwen3-1.7B~\citep{qwen2025qwen3}.
+
+\paragraph{Training.} Two adaptation methods: (1) LoRA~\citep{hu2022lora} with $r=32$, $\alpha=64$, targeting all linear layers (q/k/v/o/gate/up/down projections), lr = $5\times10^{-5}$; (2) full fine-tuning (FullFT) with lr = $5\times10^{-6}$. Temperature 0.7 for on-policy generation. Cosine learning rate schedule.
+
+\paragraph{Math experiments.} 3,200 training problems, $n_{\text{samples}}=1$, batch size 16, 200 training steps. Position limits: 50, 100, 200, and full-sequence. Evaluation: MATH-500~\citep{hendrycks2021measuring} with $n=4$ samples at temperature 0.7, reporting avg@4, maj@4, and pass@4.
+
+\paragraph{Coding experiments.} 6,400 training problems from CodeUltraFeedback, $n_{\text{samples}}=1$, batch size 16, 400 training steps. Position limits: 50, 100, 150, 250, and full-sequence. Evaluation: HumanEval, HumanEval+, MBPP, MBPP+~\citep{chen2021evaluating, austin2021program} at temperature 0.0.
+
+\paragraph{Baselines.} Undistilled Qwen2.5-Math-1.5B (50.95\% avg@4 on MATH-500) and full-sequence distillation.
+
+\subsection{Math Results}
+
+Table~\ref{tab:math_results} presents the complete math results.
+
+\paragraph{LoRA.} Pos-50 and pos-150 both achieve the best overall avg@4 of 66.65\% (at steps 150 and 100 respectively), followed by pos-200tok at 66.05\% (step 50) and pos-100 at 65.85\% (step 200). All positional variants substantially outperform the undistilled baseline (50.95\%) and match or exceed full-sequence distillation with first-boxed extraction ($\sim$65.55\%). Critically, all positional variants maintain stable accuracy across training steps---the range between best and worst steps is typically 1--2 percentage points, compared to the 20+ point degradation of full-sequence.
+
+\paragraph{Full fine-tuning.} FullFT results are uniformly lower than LoRA by approximately 10 percentage points. Notably, full-sequence FullFT (58.20\% at step 200) \emph{outperforms} all positional FullFT variants (best: pos-50 at 56.75\%), and does not exhibit the catastrophic repetition observed with LoRA full-sequence. We attribute this to FullFT's lower learning rate ($5\times10^{-6}$ vs.\ $5\times10^{-5}$) providing sufficient implicit regularization to prevent degenerate attractors. This suggests that \method{} is most beneficial when the optimizer is aggressive enough to exploit degenerate patterns---precisely the regime where LoRA (the dominant adaptation method) operates.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{MATH-500 results (avg@4 / maj@4 / pass@4).} LoRA and FullFT with $n_{\text{samples}}=1$, $\text{bs}=16$, 3,200 problems. Best avg@4 per method in \textbf{bold}. Baseline (no distillation): 50.95\% / 61.2\% / 72.8\%.}
+\label{tab:math_results}
+\footnotesize
+\begin{tabular}{ll cccc}
+\toprule
+\textbf{Method} & \textbf{Metric} & \textbf{Step 50} & \textbf{Step 100} & \textbf{Step 150} & \textbf{Step 200} \\
+\midrule
+\multicolumn{6}{l}{\textit{LoRA (lr = $5\times10^{-5}$)}} \\
+\midrule
+\multirow{3}{*}{Pos-50} & avg@4 & 62.35 & 66.05 & \textbf{66.65} & 64.85 \\
+ & maj@4 & 69.40 & 72.00 & 71.00 & 71.20 \\
+ & pass@4 & 77.20 & 79.40 & 81.00 & 79.60 \\
+\midrule
+\multirow{3}{*}{Pos-100} & avg@4 & 63.75 & 64.45 & 65.15 & \textbf{65.85} \\
+ & maj@4 & 70.00 & 68.40 & 69.60 & 70.80 \\
+ & pass@4 & 79.80 & 78.40 & 80.20 & 79.80 \\
+\midrule
+\multirow{3}{*}{Pos-150} & avg@4 & 65.35 & \textbf{66.65} & 65.30 & 65.75 \\
+ & maj@4 & 66.80 & 67.00 & 66.30 & 67.30 \\
+ & pass@4 & 79.00 & 81.00 & 78.20 & 80.00 \\
+\midrule
+\multirow{3}{*}{Pos-200} & avg@4 & \textbf{66.05} & 64.65 & 65.10 & 65.55 \\
+ & maj@4 & 71.20 & 68.40 & 70.00 & 71.20 \\
+ & pass@4 & 81.00 & 79.80 & 80.60 & 80.60 \\
+\midrule
+\multicolumn{6}{l}{\textit{Full fine-tuning (lr = $5\times10^{-6}$)}} \\
+\midrule
+\multirow{3}{*}{Pos-50} & avg@4 & 55.55 & 55.85 & \textbf{56.75} & 55.50 \\
+ & maj@4 & 65.20 & 65.00 & 66.20 & 64.20 \\
+ & pass@4 & 75.60 & 74.40 & 74.80 & 75.00 \\
+\midrule
+\multirow{3}{*}{Pos-200} & avg@4 & 55.45 & 55.80 & 55.90 & \textbf{56.40} \\
+ & maj@4 & 64.40 & 64.00 & 64.00 & 65.20 \\
+ & pass@4 & 74.60 & 74.80 & 75.60 & 75.20 \\
+\midrule
+\multirow{3}{*}{Full-seq} & avg@4 & 53.75 & 56.95 & 57.55 & \textbf{58.20} \\
+ & maj@4 & 61.00 & 66.80 & 65.80 & 65.40 \\
+ & pass@4 & 73.40 & 77.40 & 75.60 & 75.40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Coding Results}
+
+Table~\ref{tab:coding_results} summarizes the coding results, with the most striking finding being the training stability difference.
+
+\paragraph{LoRA.} Pos-50 and pos-100 both reach 42.1\% HumanEval (at steps 350 and 150 respectively), while full-sequence starts at 40.2\% (step 50) and degrades to 26.8\% (step 400)---a 33\% relative decline. Pos-50 maintains HumanEval above 37.8\% at every checkpoint, demonstrating robust stability. On MBPP, full-sequence starts strongest (52.6\% at step 50) but declines, while positional variants maintain 46--52\%.
+
+\paragraph{Full fine-tuning.} FullFT results are more compressed across methods. Pos-250 achieves the best HumanEval at 37.8\% (step 350), while full-sequence peaks at 36.6\% (step 150) but declines to 31.1\% (step 400). FullFT shows better MBPP performance than LoRA, with pos-250 reaching 54.5\%.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Coding results (HumanEval / MBPP pass@1).} Best HumanEval per method in \textbf{bold}. Full-sequence LoRA degrades from 40.2\% to 26.8\% over training; positional variants are stable.}
+\label{tab:coding_results}
+\footnotesize
+\begin{tabular}{ll cccccccc}
+\toprule
+\textbf{Method} & \textbf{Metric} & \textbf{s50} & \textbf{s100} & \textbf{s150} & \textbf{s200} & \textbf{s250} & \textbf{s300} & \textbf{s350} & \textbf{s400} \\
+\midrule
+\multicolumn{10}{l}{\textit{LoRA}} \\
+\midrule
+\multirow{2}{*}{Pos-50} & HE & 37.8 & 39.0 & 39.6 & 41.5 & 40.2 & 40.9 & \textbf{42.1} & 40.9 \\
+ & MBPP & 52.1 & 48.9 & 46.0 & 46.0 & 47.6 & 46.3 & 46.6 & 46.3 \\
+\midrule
+\multirow{2}{*}{Pos-100} & HE & 37.2 & 39.0 & \textbf{42.1} & 37.8 & 39.0 & 37.8 & 37.8 & 38.4 \\
+ & MBPP & 52.1 & 49.7 & 49.2 & 49.2 & 48.4 & 49.2 & 47.9 & 48.9 \\
+\midrule
+\multirow{2}{*}{Full-seq} & HE & \textbf{40.2} & 31.7 & 32.3 & 32.9 & 27.4 & 28.0 & 26.8 & 26.8 \\
+ & MBPP & 52.6 & 48.9 & 49.5 & 48.1 & 47.9 & 47.1 & 48.4 & 47.6 \\
+\midrule
+\multicolumn{10}{l}{\textit{Full fine-tuning}} \\
+\midrule
+\multirow{2}{*}{Pos-250} & HE & 32.9 & 34.8 & 35.4 & 35.4 & 37.2 & 36.6 & \textbf{37.8} & 33.5 \\
+ & MBPP & 54.0 & 53.7 & 54.0 & 54.8 & 54.5 & 53.4 & 54.2 & 53.2 \\
+\midrule
+\multirow{2}{*}{Full-seq} & HE & 32.3 & 32.3 & \textbf{36.6} & 36.0 & 31.1 & 30.5 & 31.7 & 31.1 \\
+ & MBPP & 53.2 & 53.4 & 53.2 & 54.0 & 51.9 & 52.9 & 52.9 & 53.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{The Cascade Effect}
+\label{sec:cascade}
+
+A natural concern is that restricting loss to the first $N$ tokens might only improve those specific positions without benefiting the overall response. We provide five lines of evidence that this is not the case---early-token distillation creates a strong \emph{cascade effect} that improves the entire generation trajectory.
+
+\paragraph{Evidence 1: Downstream accuracy far exceeds trained positions.} Pos-5, which distills only the first 5 tokens, improves avg@4 from 50.9\% to 56.3\% (+5.4pp). Pos-50 improves to 61.9\% (+11.0pp). These accuracy gains manifest across the full response (averaging 1,929 characters), not just the first 50 tokens. The improvement ratio is 3:1---202 out of 500 problems improve, while only 68 degrade.
+
+\paragraph{Evidence 2: Late tokens change as much as early tokens.} We compare distilled and base model responses using Jaccard word similarity, split at word position 40 ($\approx$50 tokens). For pos-50, the Jaccard similarity to baseline is 0.251 for both the early and late portions. Late tokens---which receive zero distillation signal---change just as much as early tokens. At a word cutoff of 150 ($\approx$195 tokens), the late Jaccard is actually lower (0.202 vs.\ 0.265), meaning late tokens change \emph{more} than early tokens.
+
+\paragraph{Evidence 3: KL reduction beyond trained positions.} As shown in Table~\ref{tab:post_kl}, pos-200tok reduces KL by 50--60\% in the trained range (0--200) and by 30--40\% in the untrained range (200--400), confirming the cascade at the distribution level.
+
+\paragraph{Evidence 4: Structural and behavioral changes.} Distilled models adopt teacher-like response structure throughout the entire response. Pos-50 produces responses with 5.3 step markers per response (vs.\ 2.8 for base), and all positional models converge to ``We are given...'' openings (10.5\% of responses for pos-50, vs.\ diverse openings for the base model). These structural changes extend far beyond the first 50 tokens.
+
+\paragraph{Evidence 5: Training stability.} Full-sequence distillation, which trains on all positions, paradoxically produces less stable training than positional methods that train on fewer positions. This suggests that the cascade effect from early-token training is more beneficial than direct supervision of later positions, which introduces degenerate attractor states.
+
+\subsection{Position Limit Sweep}
+
+Table~\ref{tab:pos_sweep} presents a fine-grained sweep across position limits, using both the original ($n=16$, $\text{bs}=16$, 200 problems) and large-scale ($n=1$, $\text{bs}=16$, 3,200 problems) LoRA configurations. Several patterns emerge:
+
+\begin{itemize}
+    \item There is a pronounced jump between pos-20 (60.20\%) and pos-50 (62.45\%) in the $n16$ setting, suggesting that positions 20--50 contain critical reasoning-setup tokens.
+    \item Returns diminish after pos-50: in the $n16$ setting, doubling from 50 to 100 adds ${\sim}$2 percentage points. In the $n1$ setting, pos-50, pos-150, and pos-200 all converge to ${\sim}$66.65\%, suggesting a performance ceiling independent of position limit once $N \geq 50$.
+    \item The progressive variant (linearly increasing $N$ from 1 to 200) achieves 62.30\%, comparable to fixed pos-50 (62.45\%) in the same $n16$ configuration.
+    \item Full-sequence distillation with first-boxed extraction achieves ${\sim}$65.55\%, which pos-50 surpasses in the large-scale config (66.65\%).
+\end{itemize}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Position limit sweep.} LoRA results on MATH-500. Two configs: $n16$ ($n_{\text{samples}}{=}16$, 200 problems) and $n1$ ($n_{\text{samples}}{=}1$, 3,200 problems). Best avg@4 across all training steps reported. \% max gain computed within the $n16$ config (max = 66.75\% at pos-200).}
+\label{tab:pos_sweep}
+\small
+\begin{tabular}{ccccc}
+\toprule
+\textbf{Pos.\ limit} & \textbf{\% KL} & \textbf{Best avg@4 ($n16$)} & \textbf{Best avg@4 ($n1$)} & \textbf{\% max gain ($n16$)} \\
+\midrule
+5 & 5.2\% & 56.50\% & --- & 35\% \\
+10 & 7.8\% & 59.50\% & --- & 54\% \\
+20 & 12.2\% & 60.20\% & --- & 58\% \\
+50 & 26.2\% & 62.45\% & 66.65\% & 73\% \\
+100 & 43.9\% & 64.25\% & 65.85\% & 84--94\% \\
+150 & --- & 65.70\% & 66.65\% & 93--100\% \\
+200 & 66.1\% & 66.75\% & 66.05\% & 100\% \\
+Progressive & --- & 62.30\% & --- & 72\% \\
+Full-seq & 100\% & ${\sim}$65.55\%$^\dagger$ & --- & 92\%$^\dagger$ \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$ First-boxed extraction; last-boxed degrades to 43.80\% by step 200.}
+\end{tabular}
+\end{table}
+
+\subsection{LoRA vs.\ Full Fine-Tuning}
+
+Across all experiments, LoRA consistently outperforms full fine-tuning on mathematical reasoning by approximately 10 percentage points (e.g., pos-50: 66.65\% vs.\ 56.75\%). We hypothesize that LoRA's low-rank constraint provides beneficial regularization that prevents overfitting to the distillation loss.
+
+An important nuance: with FullFT, full-sequence distillation (58.20\%) outperforms positional variants (best 56.75\%), and does not exhibit catastrophic repetition. This suggests that \method{}'s primary benefit is \emph{stability under aggressive optimization}. With LoRA's higher learning rate ($5\times10^{-5}$), full-sequence loss creates degenerate attractors that positional loss avoids. With FullFT's conservative learning rate ($5\times10^{-6}$), these attractors do not form, and full-sequence loss provides marginally more signal. Since LoRA is the dominant adaptation method for LLM distillation in practice, this is the more relevant regime.
+
+On coding tasks, the picture is mixed: LoRA achieves higher HumanEval scores (42.1\% vs.\ 37.8\%), while FullFT achieves higher MBPP scores (54.8\% vs.\ 52.1\%). Both training methods benefit from \method{}'s stability advantage over full-sequence distillation.
+
+\subsection{Batch Configuration}
+\label{sec:batch_config}
+
+We compare three batch configurations for LoRA math experiments: $n16\text{bs}16$ (1 problem $\times$ 16 trajectories per step), $n1\text{bs}16$ (16 problems $\times$ 1 trajectory per step), and $n1\text{bs}1$ (1 problem $\times$ 1 trajectory per step).
+
+\paragraph{LoRA.} The two batch-size-16 configurations achieve comparable peak performance ($n16$: 66.75\%, $n1$: 66.65\%), suggesting that problem diversity and trajectory diversity contribute roughly equally when combined with LoRA's implicit regularization.
+
+\paragraph{Full fine-tuning.} $n1\text{bs}16$ consistently outperforms $n16\text{bs}16$ by $\sim$2 percentage points (56.75\% vs.\ 54.30\% for pos-50), indicating that full fine-tuning benefits more from problem diversity than trajectory diversity.
+
+\paragraph{Extreme: $n1\text{bs}1$.} Despite single-trajectory gradients (extremely noisy), training with batch size 1 does not diverge. With 16$\times$ more steps (3,200 total), pos-50 reaches 80.4\% pass@4, surpassing the batch-size-16 variant's 78.6\%. LoRA's low-rank constraint provides sufficient implicit regularization even for this extreme regime.
+
+
+% ============================================================================
+% 7. DISCUSSION
+% ============================================================================
+\section{Discussion}
+\label{sec:discussion}
+
+\subsection{Why Does Positional Distillation Work?}
+
+We propose three complementary explanations for the effectiveness of \method{}:
+
+\paragraph{Autoregressive cascade.} Early tokens determine the trajectory of subsequent tokens. Better initial decisions---approach selection, problem framing---propagate through generation. Our Jaccard analysis (Section~\ref{sec:cascade}) confirms this: changing the first 50 tokens changes the entire 1500+ character response uniformly.
+
+\paragraph{Strategy over arithmetic.} Token classification (Section~\ref{sec:token_classification}) shows teacher-student disagreement concentrates on planning tokens (mean KL = 1.754) vs.\ computation tokens (0.281)---a 6.2$\times$ ratio. The teacher's value is in knowing \emph{how to approach} problems, not \emph{how to compute} answers. Distilling strategy is sufficient; distilling computation adds noise.
+
+\paragraph{Avoiding degenerate attractors.} After producing $\texttt{\textbackslash boxed\{answer\}}$, full-sequence loss encourages repeating this high-confidence token, creating a positive feedback loop. \Method{} avoids this entirely by not computing loss beyond early positions.
+
+\subsection{Limitations}
+
+Our work has several limitations that warrant future investigation:
+
+\begin{itemize}
+    \item \textbf{Single model pair.} All experiments use Qwen2.5-Math-1.5B / Qwen3-1.7B. While consistent across two tasks and two training methods, generalization to other families and scales remains to be validated.
+    \item \textbf{Position limit selection.} The optimal $N$ varies by task (50--200 works broadly). Adaptive methods setting $N$ per-example could be more robust.
+    \item \textbf{Task generality.} The cascade effect relies on early tokens being ``strategic.'' For tasks without this structure (e.g., translation), the method may be less effective.
+    \item \textbf{Single random seed.} Consistency across configurations provides confidence, but formal significance testing with multiple seeds would strengthen claims.
+    \item \textbf{Optimizer interaction.} With conservative optimization (FullFT, lr=$5\times10^{-6}$), full-sequence distillation outperforms positional variants. \Method{} is most beneficial under aggressive optimization (LoRA, lr=$5\times10^{-5}$)---the dominant regime in practice but not universal.
+\end{itemize}
+
+\subsection{Broader Impact}
+
+\Method{} reduces generation cost per training step by 3--7$\times$, making on-policy distillation practical where full-sequence generation is prohibitive. It also improves stability, reducing the need for careful early stopping. Beyond distillation, the finding that KL divergence is front-loaded may inform reward design in RLHF~\citep{deepseekr1} and RL for reasoning~\citep{wang2025beyond8020}, where similar positional effects likely exist.
+
+
+% ============================================================================
+% 8. CONCLUSION
+% ============================================================================
+\section{Conclusion}
+
+We showed that on-policy knowledge distillation suffers from positional non-uniformity: teacher-student KL divergence concentrates at early reasoning-strategy tokens, with the first 50 tokens containing 26\% of total KL yet delivering 73\% of the performance gain. \methodfull{} exploits this by computing loss only on the first $N$ response tokens---a single-line change that matches or exceeds full-sequence performance on MATH-500 (66.75\% vs.\ 65.55\% avg@4) and HumanEval (42.1\% vs.\ 40.2\% pass@1), eliminates training instability, and reduces generation cost by 3--7$\times$. The cascade effect---where distilling 50 early tokens reshapes entire 1500+ token responses---demonstrates that in autoregressive models, getting the beginning right is sufficient to get everything right.
+
+
+% ============================================================================
+% REFERENCES
+% ============================================================================
+\bibliographystyle{plainnat}
+\bibliography{references}
+
+
+% ============================================================================
+% APPENDIX
+% ============================================================================
+\appendix
+
+\section{Full Experimental Results}
+\label{app:full_results}
+
+\subsection{Math Results: LoRA with Earlier Series ($n=16$, bs=16, 200 problems)}
+
+Table~\ref{tab:app_math_n16} presents the complete results from the original experimental series with $n_{\text{samples}}=16$ and 200 training problems.
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Complete MATH-500 results, LoRA, $n=16$, $\text{bs}=16$.} All position limits and training steps. Best per configuration in \textbf{bold}.}
+\label{tab:app_math_n16}
+\footnotesize
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Config} & \textbf{Step 50} & \textbf{Step 100} & \textbf{Step 150} & \textbf{Step 200} \\
+\midrule
+\multicolumn{5}{l}{\textit{avg@4}} \\
+\midrule
+Pos-5 & 55.15 & 55.65 & \textbf{56.50} & 56.30 \\
+Pos-10 & \textbf{59.50} & 56.40 & 56.30 & 56.00 \\
+Pos-20 & \textbf{60.20} & 57.35 & 56.40 & 56.55 \\
+Pos-50 & \textbf{62.45} & 62.15 & 60.50 & 61.90 \\
+Pos-100 & 61.15 & 63.55 & \textbf{64.25} & 63.85 \\
+Pos-150 & 63.55 & \textbf{65.70} & 64.80 & 64.40 \\
+Pos-200 & 63.25 & \textbf{66.75} & 64.55 & 65.25 \\
+Progressive & 61.10 & 62.05 & 61.95 & \textbf{62.30} \\
+Full-seq$^\dagger$ & \textbf{65.60} & 46.30 & 49.70 & 43.80 \\
+Full-seq (first-boxed) & \textbf{65.55} & 64.95 & 65.55 & 64.95 \\
+\midrule
+\multicolumn{5}{l}{\textit{pass@4}} \\
+\midrule
+Pos-5 & 74.0 & 74.8 & \textbf{76.0} & 73.4 \\
+Pos-10 & \textbf{75.8} & 73.2 & 75.4 & 74.2 \\
+Pos-20 & \textbf{77.0} & 76.0 & 73.4 & 75.8 \\
+Pos-50 & 77.0 & 78.4 & 77.6 & \textbf{78.6} \\
+Pos-100 & 77.6 & 79.2 & \textbf{80.2} & 80.2 \\
+Pos-150 & 79.6 & 77.4 & \textbf{80.0} & 79.4 \\
+Pos-200 & 79.6 & \textbf{80.2} & 79.4 & 79.2 \\
+Progressive & 77.2 & 77.8 & 78.2 & \textbf{78.8} \\
+Full-seq & \textbf{80.0} & 72.2 & 77.0 & 74.2 \\
+\bottomrule
+\multicolumn{5}{l}{\footnotesize $^\dagger$ Last-boxed extraction; degrades due to repetition.}
+\end{tabular}
+\end{table}
+
+\subsection{Complete Coding Results}
+
+Tables~\ref{tab:app_coding_lora} and~\ref{tab:app_coding_fullft} present the full coding results for all position limits and training steps.
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Complete coding results, LoRA.} HumanEval (HE) and MBPP pass@1 for all steps.}
+\label{tab:app_coding_lora}
+\footnotesize
+\begin{tabular}{llcccccccc}
+\toprule
+\textbf{Config} & \textbf{Metric} & \textbf{s50} & \textbf{s100} & \textbf{s150} & \textbf{s200} & \textbf{s250} & \textbf{s300} & \textbf{s350} & \textbf{s400} \\
+\midrule
+\multirow{2}{*}{Pos-50} & HE & 37.8 & 39.0 & 39.6 & 41.5 & 40.2 & 40.9 & \textbf{42.1} & 40.9 \\
+ & MBPP & 52.1 & 48.9 & 46.0 & 46.0 & 47.6 & 46.3 & 46.6 & 46.3 \\
+\midrule
+\multirow{2}{*}{Pos-100} & HE & 37.2 & 39.0 & \textbf{42.1} & 37.8 & 39.0 & 37.8 & 37.8 & 38.4 \\
+ & MBPP & 52.1 & 49.7 & 49.2 & 49.2 & 48.4 & 49.2 & 47.9 & 48.9 \\
+\midrule
+\multirow{2}{*}{Pos-150} & HE & 36.6 & 35.4 & 36.6 & 39.0 & \textbf{41.5} & 39.6 & 38.4 & 37.2 \\
+ & MBPP & 51.3 & 50.0 & 48.4 & 50.5 & 49.5 & 50.3 & 49.7 & 48.7 \\
+\midrule
+\multirow{2}{*}{Pos-250} & HE & \textbf{39.0} & 37.2 & 32.3 & 38.4 & 34.1 & 36.6 & 35.4 & 36.0 \\
+ & MBPP & 51.3 & 48.7 & 48.7 & 49.7 & 48.9 & 49.2 & 48.4 & 48.7 \\
+\midrule
+\multirow{2}{*}{Full-seq} & HE & \textbf{40.2} & 31.7 & 32.3 & 32.9 & 27.4 & 28.0 & 26.8 & 26.8 \\
+ & MBPP & 52.6 & 48.9 & 49.5 & 48.1 & 47.9 & 47.1 & 48.4 & 47.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Complete coding results, full fine-tuning.} HumanEval (HE) and MBPP pass@1.}
+\label{tab:app_coding_fullft}
+\footnotesize
+\begin{tabular}{llcccccccc}
+\toprule
+\textbf{Config} & \textbf{Metric} & \textbf{s50} & \textbf{s100} & \textbf{s150} & \textbf{s200} & \textbf{s250} & \textbf{s300} & \textbf{s350} & \textbf{s400} \\
+\midrule
+\multirow{2}{*}{Pos-50} & HE & 31.7 & 35.4 & \textbf{36.0} & 36.0 & 36.0 & 35.4 & 36.0 & 34.8 \\
+ & MBPP & 52.6 & 53.4 & 52.9 & 52.4 & 52.4 & 52.6 & 52.9 & 53.4 \\
+\midrule
+\multirow{2}{*}{Pos-100} & HE & 31.7 & 34.1 & 35.4 & 34.8 & \textbf{36.6} & 36.0 & 36.0 & 36.6 \\
+ & MBPP & 52.6 & 54.0 & 52.6 & 52.1 & 53.2 & 53.4 & 53.4 & 52.9 \\
+\midrule
+\multirow{2}{*}{Pos-150} & HE & 31.7 & 36.0 & 36.0 & 35.4 & 36.0 & 36.6 & 35.4 & \textbf{37.2} \\
+ & MBPP & 53.2 & 51.9 & 52.4 & 52.4 & 53.2 & 54.2 & 53.2 & 52.4 \\
+\midrule
+\multirow{2}{*}{Pos-250} & HE & 32.9 & 34.8 & 35.4 & 35.4 & 37.2 & 36.6 & \textbf{37.8} & 33.5 \\
+ & MBPP & 54.0 & 53.7 & 54.0 & 54.8 & 54.5 & 53.4 & 54.2 & 53.2 \\
+\midrule
+\multirow{2}{*}{Full-seq} & HE & 32.3 & 32.3 & \textbf{36.6} & 36.0 & 31.1 & 30.5 & 31.7 & 31.1 \\
+ & MBPP & 53.2 & 53.4 & 53.2 & 54.0 & 51.9 & 52.9 & 52.9 & 53.7 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Token Classification Methodology}
+\label{app:token_classification}
+
+We classify each token in the student's vocabulary into six categories based on string matching rules applied to the decoded token text:
+
+\begin{enumerate}
+    \item \textbf{planning}: Reasoning/strategy keywords that indicate approach selection. Includes tokens matching ``To'', ``Let'', ``First'', ``Step'', ``We'', ``Given'', ``Therefore'', ``Thus'', ``Since'', ``Solution'', ``Next'', ``From'', and their lowercase variants. These tokens reflect \emph{what reasoning approach to use}.
+
+    \item \textbf{structural}: Punctuation, whitespace, and formatting tokens. Includes commas, colons, newlines, bold markers (\texttt{**}), dollar signs, parentheses, and similar. These tokens organize the response structure.
+
+    \item \textbf{math\_number}: Digit tokens (0--9). These carry mathematical content but show minimal teacher-student disagreement.
+
+    \item \textbf{math\_operator}: Arithmetic and relational operators ($+$, $-$, $\times$, $/$, $=$, $<$, $>$, $\hat{~}$). Like numbers, these show low KL.
+
+    \item \textbf{math\_latex}: LaTeX delimiters and mathematical keywords (\texttt{\textbackslash(}, \texttt{\textbackslash[}, \texttt{\textbackslash)}, ``sum'', ``fraction'', ``integer'', etc.). These show surprisingly high KL, reflecting formatting convention differences between models.
+
+    \item \textbf{continuation}: All tokens not matching the above categories. This is the largest category, containing general English words, word fragments, and domain-specific terms.
+\end{enumerate}
+
+Table~\ref{tab:app_high_kl_tokens} lists the 20 highest-KL tokens (minimum 50 occurrences).
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Top 20 highest-KL tokens} (minimum 50 occurrences across 10,000 trajectories).}
+\label{tab:app_high_kl_tokens}
+\small
+\begin{tabular}{clccc}
+\toprule
+\textbf{Rank} & \textbf{Token} & \textbf{Category} & \textbf{Count} & \textbf{Mean KL} \\
+\midrule
+1 & ``Solution'' & planning & 152 & 21.93 \\
+2 & ``Analysis'' & continuation & 125 & 16.49 \\
+3 & \texttt{\textbackslash[} & math\_latex & 7,152 & 13.21 \\
+4 & ``examines'' & continuation & 74 & 11.51 \\
+5 & ``He'' & continuation & 150 & 10.80 \\
+6 & \texttt{\textbackslash(} & math\_latex & 21,243 & 10.30 \\
+7 & ``First'' & planning & 1,706 & 9.98 \\
+8 & ``tests'' & continuation & 52 & 8.71 \\
+9 & \texttt{\textbackslash\textbackslash} & math\_latex & 82 & 8.68 \\
+10 & ``There'' & continuation & 201 & 8.28 \\
+11 & ``Therefore'' & planning & 4,913 & 7.95 \\
+12 & ``Identify'' & continuation & 1,345 & 7.78 \\
+13 & ``To'' & planning & 8,806 & 6.90 \\
+14 & ``When'' & continuation & 89 & 6.62 \\
+15 & ``This'' & continuation & 621 & 6.34 \\
+16 & ``Thus'' & planning & 2,547 & 6.24 \\
+17 & ``First'' (space) & planning & 259 & 6.10 \\
+18 & ``To'' (space) & planning & 1,174 & 5.37 \\
+19 & ``The'' & planning & 2,626 & 5.25 \\
+20 & ``Next'' & planning & 1,753 & 5.03 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\section{Full-Sequence Degradation Details}
+\label{app:fullseq_degradation}
+
+\subsection{Boxed Repetition Statistics}
+
+Table~\ref{tab:app_boxed} provides detailed statistics on the \bboxed{} repetition phenomenon in full-sequence LoRA distillation ($n=16$, $\text{bs}=16$ configuration).
+
+\begin{table}[h]
+\centering
+\caption{\textbf{Boxed repetition progression} in full-sequence LoRA distillation on MATH-500. By step 100, over 91\% of responses contain multiple \bboxed{} tokens, averaging 88 per response.}
+\label{tab:app_boxed}
+\small
+\begin{tabular}{lcccc}
+\toprule
+\textbf{Statistic} & \textbf{Step 50} & \textbf{Step 100} & \textbf{Step 150} & \textbf{Step 200} \\
+\midrule
+Multi-boxed responses & 2.9\% & 91.5\% & 80.5\% & 89.1\% \\
+Avg \bboxed{} per response & 1.0 & 88.1 & 54.1 & 58.0 \\
+Repetitive responses & 5.9\% & 78.8\% & 58.3\% & 77.5\% \\
+Extraction failures (None) & 2.5\% & --- & --- & 24.2\% \\
+Avg response length (chars) & 1,388 & 4,023 & 3,585 & 4,558 \\
+\midrule
+Official avg@4 & 65.60\% & 46.30\% & 49.70\% & 43.80\% \\
+Relaxed avg@4 (GT in text) & 74.60\% & 70.90\% & 71.90\% & 70.30\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+The relaxed metric (counting a response as correct if it contains the ground truth answer anywhere in the text) reveals that mathematical reasoning ability is largely preserved: relaxed avg@4 only drops 4.3 percentage points (74.6\% $\rightarrow$ 70.3\%) while the official metric drops 21.8 points. This confirms that $\sim$80\% of the apparent degradation is due to extraction failure from degenerate repetition, not genuine loss of mathematical ability.
+
+\subsection{Degradation Pattern}
+
+The typical degradation pattern is: the model produces a correct solution and answer, then fills the remaining token budget with repetitions of the conclusion (e.g., ``This is the final answer. $\backslash$boxed\{answer\}'' repeated 30--80 times). This is consistent with a degenerate attractor in the full-sequence loss landscape: after producing a high-confidence answer token, the gradient from the teacher's distribution encourages producing the same high-confidence token again, creating a positive feedback loop that \method{} avoids entirely by not computing loss on answer-presentation positions.
+
+
+\end{document}

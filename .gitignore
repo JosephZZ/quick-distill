@@ -1,0 +1,33 @@
+# Checkpoints and model weights
+checkpoints/
+
+# Legacy/archive
+archive/
+
+# Weights & Biases
+wandb/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+build/
+
+# Claude Code
+.claude/
+
+# Logs (optional: remove this line if you want logs tracked)
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+*.swp
+*.swo
+*~
+.vscode/
+.idea/
