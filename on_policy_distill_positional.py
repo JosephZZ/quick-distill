@@ -32,7 +32,7 @@ def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": problem},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
 
 
 def query_teacher_hf(teacher_model, trajectories, nothink_ids=None, device="cuda:1"):
@@ -196,45 +196,56 @@ def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, tempera
     batch_sz = gen_batch_size if gen_batch_size > 0 else len(all_prompts)
     all_trajectories = {}
 
+    def _generate_batch(prompts_subset, base_offset):
+        """Generate for a batch of prompts, splitting on OOM."""
+        inputs = tokenizer(prompts_subset, return_tensors="pt", padding=True).to(student.device)
+        try:
+            with torch.no_grad():
+                outputs = student.generate(
+                    **inputs,
+                    max_new_tokens=max_new_tokens,
+                    do_sample=True,
+                    temperature=temperature,
+                    top_p=0.95,
+                )
+            # Parse outputs into trajectories grouped by problem
+            for seq_idx in range(len(prompts_subset)):
+                global_idx = base_offset + seq_idx
+                prob_idx = problem_indices[global_idx]
+                full_output = outputs[seq_idx].tolist()
+                pad_len = (inputs["attention_mask"][seq_idx] == 0).sum().item()
+                input_len = inputs["attention_mask"][seq_idx].sum().item()
+                prompt_ids = full_output[pad_len:pad_len + input_len]
+                response_ids = full_output[pad_len + input_len:]
+                while response_ids and response_ids[-1] in special_ids:
+                    response_ids.pop()
+                if len(response_ids) == 0:
+                    continue
+                prob_key = str(prob_idx)
+                if prob_key not in all_trajectories:
+                    all_trajectories[prob_key] = []
+                all_trajectories[prob_key].append({
+                    "prompt_ids": prompt_ids,
+                    "response_ids": response_ids,
+                    "full_ids": prompt_ids + response_ids,
+                })
+            del outputs, inputs
+        except torch.cuda.OutOfMemoryError:
+            del inputs
+            torch.cuda.empty_cache()
+            if len(prompts_subset) <= 1:
+                print(f"  WARNING: OOM on single prompt (generate), skipping")
+                return
+            mid = len(prompts_subset) // 2
+            print(f"  WARNING: OOM during generate (batch={len(prompts_subset)}), splitting to {mid}+{len(prompts_subset)-mid}")
+            _generate_batch(prompts_subset[:mid], base_offset)
+            _generate_batch(prompts_subset[mid:], base_offset + mid)
+
     student.eval()
     for batch_start in range(0, len(all_prompts), batch_sz):
         batch_end = min(batch_start + batch_sz, len(all_prompts))
         batch_prompts = all_prompts[batch_start:batch_end]
-        inputs = tokenizer(batch_prompts, return_tensors="pt", padding=True).to(student.device)
-
-        with torch.no_grad():
-            outputs = student.generate(
-                **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=True,
-                temperature=temperature,
-                top_p=0.95,
-            )
-
-        # Parse outputs into trajectories grouped by problem
-        for seq_idx in range(len(batch_prompts)):
-            global_idx = batch_start + seq_idx
-            prob_idx = problem_indices[global_idx]
-            full_output = outputs[seq_idx].tolist()
-            pad_len = (inputs["attention_mask"][seq_idx] == 0).sum().item()
-            input_len = inputs["attention_mask"][seq_idx].sum().item()
-            prompt_ids = full_output[pad_len:pad_len + input_len]
-            response_ids = full_output[pad_len + input_len:]
-            # Strip trailing special tokens
-            while response_ids and response_ids[-1] in special_ids:
-                response_ids.pop()
-            if len(response_ids) == 0:
-                continue
-            prob_key = str(prob_idx)
-            if prob_key not in all_trajectories:
-                all_trajectories[prob_key] = []
-            all_trajectories[prob_key].append({
-                "prompt_ids": prompt_ids,
-                "response_ids": response_ids,
-                "full_ids": prompt_ids + response_ids,
-            })
-
-        del outputs, inputs
+        _generate_batch(batch_prompts, batch_start)
         torch.cuda.empty_cache()
 
     student.train()
@@ -484,8 +495,11 @@ def main():
     with open(os.path.join(args.output_dir, "config.json"), "w") as f:
         json.dump(vars(args), f, indent=2)
 
-    # Load dataset
-    dataset = load_dataset(args.dataset, split="train", streaming=False)
+    # Load dataset (supports HF hub names and local JSONL/JSON files)
+    if os.path.exists(args.dataset):
+        dataset = load_dataset("json", data_files=args.dataset, split="train")
+    else:
+        dataset = load_dataset(args.dataset, split="train", streaming=False)
     problems = random.sample(list(dataset), min(args.num_problems, len(dataset)))
     indices = list(range(len(problems)))
 
@@ -713,39 +727,46 @@ def main():
 
             input_ids = torch.tensor(padded, dtype=torch.long, device=student_device)
             attn_mask = torch.tensor(masks, dtype=torch.long, device=student_device)
+            outputs = None
 
-            outputs = student(input_ids=input_ids, attention_mask=attn_mask, use_cache=False)
-            logits_mb = outputs.logits
+            try:
+                outputs = student(input_ids=input_ids, attention_mask=attn_mask, use_cache=False)
+                logits_mb = outputs.logits
 
-            mb_loss = torch.tensor(0.0, device=student_device)
-            for i in range(mb_size):
-                shift_logits_i = logits_mb[i, :-1, :]
-                shift_labels_i = input_ids[i, 1:]
-                start = mb_resp_starts[i] - 1
-                eff_len = mb_eff_lens[i]
+                mb_loss = torch.tensor(0.0, device=student_device)
+                for i in range(mb_size):
+                    shift_logits_i = logits_mb[i, :-1, :]
+                    shift_labels_i = input_ids[i, 1:]
+                    start = mb_resp_starts[i] - 1
+                    eff_len = mb_eff_lens[i]
 
-                t_log_probs = mb_teacher[i]
-                s_log_probs_resp = log_softmax(shift_logits_i[start:start+eff_len].float(), dim=-1)
-                limited_labels = shift_labels_i[start:start+eff_len]
-                step_tokens += eff_len
+                    t_log_probs = mb_teacher[i]
+                    s_log_probs_resp = log_softmax(shift_logits_i[start:start+eff_len].float(), dim=-1)
+                    limited_labels = shift_labels_i[start:start+eff_len]
+                    step_tokens += eff_len
 
-                loss_traj = kl_div(
-                    t_log_probs.to(student_device),
-                    s_log_probs_resp,
-                    log_target=True,
-                    reduction="batchmean",
-                )
-                mb_loss = mb_loss + loss_traj / n_trajs
+                    loss_traj = kl_div(
+                        t_log_probs.to(student_device),
+                        s_log_probs_resp,
+                        log_target=True,
+                        reduction="batchmean",
+                    )
+                    mb_loss = mb_loss + loss_traj / n_trajs
 
-                with torch.no_grad():
-                    s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                    t_lps_sampled = t_log_probs.to(student_device).gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                    step_kl += (s_lps - t_lps_sampled).mean().item()
-                    step_ce += (-s_lps).mean().item()
+                    with torch.no_grad():
+                        s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
+                        t_lps_sampled = t_log_probs.to(student_device).gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
+                        step_kl += (s_lps - t_lps_sampled).mean().item()
+                        step_ce += (-s_lps).mean().item()
 
-            mb_loss.backward()
-            step_loss_val += mb_loss.item()
-            del input_ids, attn_mask, outputs, logits_mb, mb_loss
+                mb_loss.backward()
+                step_loss_val += mb_loss.item()
+            except torch.cuda.OutOfMemoryError:
+                print(f"  WARNING: OOM on mini-batch (seq_len={max_len}), skipping")
+                student.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+
+            del input_ids, attn_mask, outputs
 
         # Gradient clipping and optimization (once per chunk)
         torch.nn.utils.clip_grad_norm_(student.parameters(), args.max_grad_norm)
@@ -784,12 +805,13 @@ def main():
                 tokenizer.save_pretrained(save_dir)
             else:
                 student.save_pretrained(save_dir)
-            optimizer_state = {
-                'optimizer': optimizer.state_dict(),
-                'scheduler': scheduler.state_dict(),
-                'step': step,
-            }
-            torch.save(optimizer_state, os.path.join(save_dir, "optimizer.pt"))
+            # Skip saving optimizer state (5.8GB per checkpoint, not needed for eval-only workflow)
+            # optimizer_state = {
+            #     'optimizer': optimizer.state_dict(),
+            #     'scheduler': scheduler.state_dict(),
+            #     'step': step,
+            # }
+            # torch.save(optimizer_state, os.path.join(save_dir, "optimizer.pt"))
             print(f"  Saved {'full' if args.full_finetune else 'LoRA'} checkpoint: {save_dir}")
 
         # Periodic eval (at every save_steps) — vLLM eval on GPU 1

@@ -18,7 +18,7 @@ def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": problem},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
+    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
 
 
 def main():

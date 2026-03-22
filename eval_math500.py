@@ -124,6 +124,7 @@ def main():
             [{"role": "user", "content": question}],
             tokenize=False,
             add_generation_prompt=True,
+            enable_thinking=False,
         )
         prompts.append(prompt)
         gt = extract_answer(example["solution"])
