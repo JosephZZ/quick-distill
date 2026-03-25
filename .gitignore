@@ -17,6 +17,14 @@ build/
 
 # Claude Code
 .claude/
+.claudeprism/
+
+# LaTeX build artifacts
+*.aux
+*.bbl
+*.blg
+*.log
+*.out
 
 # Logs (optional: remove this line if you want logs tracked)
 logs/

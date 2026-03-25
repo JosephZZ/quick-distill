@@ -53,8 +53,7 @@ In the LLM pretraining setting, \citet{li2022stability} showed that long sequenc
 \citet{pouransari2024dataset} extended this with variable sequence length curriculum for LLM pretraining, achieving up to 3$\times$ faster convergence.
 Our progressive position schedule---linearly increasing the position limit from 1 to 200 over training---applies the curriculum principle to the distillation loss scope rather than to the input sequence length, and represents a novel form of curriculum specific to knowledge distillation.
 
-\paragraph{Mathematical Reasoning and Model Context.}
-Our experiments use Qwen2.5-Math-1.5B~\citep{qwen2024qwen25math} as the student and Qwen3-1.7B~\citep{qwen2025qwen3} as the teacher, evaluating on the MATH-500 subset~\citep{lightman2023verify} of the MATH benchmark~\citep{hendrycks2021measuring}.
-We use LoRA~\citep{hu2022lora} for parameter-efficient fine-tuning.
+\paragraph{Reasoning Distillation.}
 The distillation-vs-RL paradigm for reasoning has been established by DeepSeek-R1~\citep{deepseekr1}, which showed that distilled models can outperform RL-trained ones in certain settings.
+Chain-of-thought prompting~\citep{wei2022chainofthought} enables LLMs to solve complex problems via intermediate reasoning, and distilling CoT capabilities has become a key application of KD.
 Our work contributes to this landscape by demonstrating that the effectiveness of distillation can be significantly improved through principled control of the loss computation scope.
