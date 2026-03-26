@@ -25,6 +25,18 @@ from tqdm import tqdm
 import wandb
 
 
+def _supports_thinking(tokenizer):
+    """Check if tokenizer supports enable_thinking parameter (Qwen3, Gemma3, etc.)."""
+    try:
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True, enable_thinking=False,
+        )
+        return True
+    except TypeError:
+        return False
+
+
 def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
     if system_prompt is None:
         system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
@@ -32,7 +44,10 @@ def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": problem},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    kwargs = dict(tokenize=False, add_generation_prompt=True)
+    if _supports_thinking(tokenizer):
+        kwargs["enable_thinking"] = False
+    return tokenizer.apply_chat_template(messages, **kwargs)
 
 
 def query_teacher_hf(teacher_model, trajectories, nothink_ids=None, device="cuda:1"):
@@ -254,6 +269,126 @@ def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, tempera
     return all_trajectories
 
 
+###############################################################################
+# SGLang persistent server helpers
+###############################################################################
+
+_sglang_process = None
+_sglang_port = None
+
+
+def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50, port=30000):
+    """Launch a persistent SGLang server. Returns (process, port)."""
+    global _sglang_process, _sglang_port
+    if _sglang_process is not None:
+        return _sglang_process, _sglang_port
+
+    import requests as _req
+    env = os.environ.copy()
+
+    cmd = [
+        sys.executable, "-m", "sglang.launch_server",
+        "--model-path", model_path,
+        "--tokenizer-path", tokenizer_name,
+        "--port", str(port),
+        "--mem-fraction-static", str(gpu_memory_utilization),
+        "--trust-remote-code",
+        "--dtype", "bfloat16",
+    ]
+    print(f"  Starting SGLang server on port {port} (gpu_util={gpu_memory_utilization})...")
+    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    # Wait for server to be ready (up to 120s)
+    for i in range(120):
+        try:
+            r = _req.get(f"http://localhost:{port}/health", timeout=2)
+            if r.status_code == 200:
+                print(f"  SGLang server ready (took {i+1}s)")
+                _sglang_process = proc
+                _sglang_port = port
+                return proc, port
+        except Exception:
+            pass
+        time.sleep(1)
+        if proc.poll() is not None:
+            raise RuntimeError(f"SGLang server exited with code {proc.returncode}")
+
+    proc.kill()
+    raise RuntimeError("SGLang server failed to start within 120s")
+
+
+def update_sglang_weights(model_path, port=None):
+    """Update the running SGLang server's model weights from a saved checkpoint."""
+    import requests as _req
+    port = port or _sglang_port
+    r = _req.post(f"http://localhost:{port}/update_weights_from_disk",
+                  json={"model_path": os.path.abspath(model_path)}, timeout=120)
+    if r.status_code != 200 or not r.json().get("success", False):
+        print(f"  WARNING: SGLang weight update failed: {r.text}")
+        return False
+    return True
+
+
+def generate_chunk_sglang(problems, n_samples, max_new_tokens, temperature,
+                          tokenizer, system_prompt=None, port=None):
+    """Generate trajectories using the persistent SGLang server."""
+    import requests as _req
+    port = port or _sglang_port
+
+    # Build prompts
+    prompts = []
+    for problem in problems:
+        prompt = build_prompt(problem, tokenizer, system_prompt)
+        prompts.extend([prompt] * n_samples)
+
+    # Send batch request
+    r = _req.post(f"http://localhost:{port}/generate", json={
+        "text": prompts,
+        "sampling_params": {
+            "temperature": temperature,
+            "max_new_tokens": max_new_tokens,
+            "skip_special_tokens": False,
+        },
+    }, timeout=3600)
+
+    if r.status_code != 200:
+        print(f"  SGLang generate failed: {r.status_code} {r.text[:200]}")
+        return None
+
+    outputs = r.json()
+
+    # Parse into trajectory format matching vLLM output
+    all_trajectories = {}
+    for i, problem in enumerate(problems):
+        trajs = []
+        for j in range(n_samples):
+            idx = i * n_samples + j
+            text = outputs[idx]["text"] if isinstance(outputs[idx], dict) else outputs[idx]
+            prompt_text = prompts[idx]
+            prompt_ids = tokenizer.encode(prompt_text, add_special_tokens=False)
+            response_ids = tokenizer.encode(text, add_special_tokens=False)
+            trajs.append({
+                "prompt_ids": prompt_ids,
+                "response_ids": response_ids,
+                "text": text,
+            })
+        all_trajectories[problem] = trajs
+
+    return all_trajectories
+
+
+def stop_sglang_server():
+    """Stop the persistent SGLang server."""
+    global _sglang_process, _sglang_port
+    if _sglang_process is not None:
+        _sglang_process.kill()
+        _sglang_process.wait()
+        _sglang_process = None
+        _sglang_port = None
+        gc.collect()
+        torch.cuda.empty_cache()
+
+
 def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new_tokens, temperature, output_file, gpu_id=0, max_retries=3, mem_threshold_mb=500, gpu_memory_utilization=0.90, system_prompt=None):
     """Generate trajectories for a chunk of problems using vLLM subprocess."""
     output_file = os.path.abspath(output_file)
@@ -264,7 +399,9 @@ def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new
         json.dump(problems, f)
 
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # Only override CUDA_VISIBLE_DEVICES if not already set (avoid clobbering parent's GPU assignment)
+    if "CUDA_VISIBLE_DEVICES" not in os.environ:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     cmd = [
         sys.executable, "vllm_generate.py",
@@ -303,13 +440,24 @@ def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new
     return all_trajectories
 
 
+def _get_physical_gpu_id(logical_id=0):
+    """Get the physical GPU ID from CUDA_VISIBLE_DEVICES, or return logical_id if unset."""
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES", None)
+    if cvd is not None and cvd.strip():
+        ids = [x.strip() for x in cvd.split(",")]
+        if logical_id < len(ids):
+            return ids[logical_id]
+    return str(logical_id)
+
+
 def _kill_orphan_vllm(gpu_id, mem_threshold_mb=500):
     """Kill any leftover VLLM::EngineCore processes on the given GPU and wait for memory release."""
+    physical_id = _get_physical_gpu_id(gpu_id)
     import signal
     try:
         result = subprocess.run(
             ["nvidia-smi", "--query-compute-apps=pid,name", "--format=csv,noheader",
-             f"--id={gpu_id}"],
+             f"--id={physical_id}"],
             capture_output=True, text=True, timeout=10,
         )
         for line in result.stdout.strip().split("\n"):
@@ -328,7 +476,7 @@ def _kill_orphan_vllm(gpu_id, mem_threshold_mb=500):
         try:
             result = subprocess.run(
                 ["nvidia-smi", "--query-gpu=memory.used", "--format=csv,noheader,nounits",
-                 f"--id={gpu_id}"],
+                 f"--id={physical_id}"],
                 capture_output=True, text=True, timeout=5,
             )
             mem_mb = int(result.stdout.strip())
@@ -337,13 +485,15 @@ def _kill_orphan_vllm(gpu_id, mem_threshold_mb=500):
         except Exception:
             pass
         time.sleep(0.5)
-    print(f"  Warning: GPU {gpu_id} memory not fully freed")
+    print(f"  Warning: GPU {physical_id} memory not fully freed")
 
 
 def run_eval_math500(model_path, output_dir, tokenizer_name, n_samples=4, gpu_id=0):
     """Run MATH-500 eval using vLLM as a subprocess."""
     env = os.environ.copy()
-    env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # Only override CUDA_VISIBLE_DEVICES if not already set
+    if "CUDA_VISIBLE_DEVICES" not in os.environ:
+        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
 
     cmd = [
         sys.executable, "eval_math500.py",
@@ -383,8 +533,8 @@ def save_merged_model(student, tokenizer, merged_path):
         clean_k = k.replace('base_model.model.', '') if k.startswith('base_model.model.') else k
         # Strip PEFT's .base_layer. wrapper from key names
         clean_k = clean_k.replace('.base_layer.', '.')
-        # Clone to break shared memory (tied embeddings)
-        clean_sd[clean_k] = v.clone()
+        # Clone to CPU to break shared memory (tied embeddings) and avoid GPU OOM
+        clean_sd[clean_k] = v.detach().cpu().clone()
     # Unmerge adapter so LoRA training can continue correctly
     student.unmerge_adapter()
     # Save config + weights + tokenizer
@@ -456,8 +606,10 @@ def main():
                        help="Batch size for HF generation (0=all at once, >0 to generate in sub-batches)")
     parser.add_argument("--use_vllm", action="store_true",
                        help="Use vLLM subprocess for generation (faster but requires GPU offload)")
+    parser.add_argument("--use_sglang", action="store_true",
+                       help="Use persistent SGLang server for generation (fastest, no offload needed)")
     parser.add_argument("--vllm_gpu_util", type=float, default=0.90,
-                       help="GPU memory utilization for vLLM (default 0.90)")
+                       help="GPU memory utilization for vLLM/SGLang (default 0.90)")
     parser.add_argument("--full_finetune", action="store_true",
                        help="Full finetune (no LoRA). All parameters are trainable.")
     parser.add_argument("--fresh_scheduler", action="store_true",
@@ -508,7 +660,11 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.student_model, trust_remote_code=True)
     teacher_tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, trust_remote_code=True)
-    nothink_ids = teacher_tokenizer.encode("<think>\n\n</think>\n\n")
+    # Qwen3/Gemma3 thinking models need nothink prefix; others get empty list
+    _nothink_str = "<think>\n\n</think>\n\n"
+    _test_ids = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
+    # If the tokenizer doesn't know <think> token, it will split into subwords (many ids)
+    nothink_ids = _test_ids if len(_test_ids) <= 6 else []
 
     # Load teacher model on GPU 1 using HF
     teacher_device = f"cuda:{args.teacher_gpu}"
@@ -602,7 +758,37 @@ def main():
         # ---- Phase 1: Generate trajectories ----
         gen_start = time.time()
 
-        if args.use_vllm:
+        if args.use_sglang:
+            # SGLang path: persistent server, no offloading needed
+            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (SGLang)...")
+
+            # 1. Save merged model and update server weights
+            merged_gen_path = os.path.join(args.output_dir, "_sglang_merged")
+            if args.full_finetune:
+                student.save_pretrained(merged_gen_path)
+                tokenizer.save_pretrained(merged_gen_path)
+            else:
+                save_merged_model(student, tokenizer, merged_gen_path)
+
+            # 2. Start server on first call, or update weights
+            if _sglang_process is None:
+                start_sglang_server(merged_gen_path, args.student_model,
+                                    gpu_memory_utilization=args.vllm_gpu_util,
+                                    port=30000 + args.student_gpu)
+            else:
+                update_sglang_weights(merged_gen_path)
+
+            # 3. Generate (no offload needed — server is a separate process)
+            all_trajectories = generate_chunk_sglang(
+                chunk_problems, args.n_samples, args.max_new_tokens,
+                args.temperature, tokenizer, system_prompt=args.system_prompt,
+            )
+
+            # 4. Cleanup merged checkpoint
+            if os.path.exists(merged_gen_path):
+                shutil.rmtree(merged_gen_path)
+
+        elif args.use_vllm:
             # vLLM path: offload models to CPU, run vLLM subprocess, reload
             print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (vLLM)...")
 
@@ -631,7 +817,9 @@ def main():
                 system_prompt=args.system_prompt,
             )
 
-            # 4. Move models back to GPU
+            # 4. Move models back to GPU (clear cache first — vLLM may leave residual memory)
+            gc.collect()
+            torch.cuda.empty_cache()
             student.to(student_device)
             teacher_model.to(teacher_device)
 

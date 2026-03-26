@@ -183,7 +183,10 @@ def generate_responses(model_path, problems, output_dir, max_new_tokens=512,
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": p["problem"]},
         ]
-        prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        try:
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+        except TypeError:
+            prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
         prompts.append(prompt)
 
     print(f"Loading model {model_path} with vLLM...")

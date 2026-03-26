@@ -11,6 +11,18 @@ from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
 
+def _supports_thinking(tokenizer):
+    """Check if tokenizer supports enable_thinking parameter (Qwen3, Gemma3, etc.)."""
+    try:
+        tokenizer.apply_chat_template(
+            [{"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True, enable_thinking=False,
+        )
+        return True
+    except TypeError:
+        return False
+
+
 def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
     if system_prompt is None:
         system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
@@ -18,7 +30,10 @@ def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
         {"role": "system", "content": system_prompt},
         {"role": "user", "content": problem},
     ]
-    return tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
+    kwargs = dict(tokenize=False, add_generation_prompt=True)
+    if _supports_thinking(tokenizer):
+        kwargs["enable_thinking"] = False
+    return tokenizer.apply_chat_template(messages, **kwargs)
 
 
 def main():

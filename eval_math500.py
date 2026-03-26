@@ -22,8 +22,8 @@ from datasets import load_dataset
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
-# Add DFT math_evaluation to path for math_equal
-sys.path.insert(0, "/CGLab/ziheng/projects/DFT/math_evaluation")
+# Add math_evaluation to path for math_equal
+sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "math_evaluation"))
 from grader import math_equal
 
 
@@ -120,12 +120,16 @@ def main():
     ground_truths = []
     for example in ds:
         question = example["problem"] + " " + instruction
-        prompt = tokenizer.apply_chat_template(
-            [{"role": "user", "content": question}],
-            tokenize=False,
-            add_generation_prompt=True,
-            enable_thinking=False,
-        )
+        chat_kwargs = dict(tokenize=False, add_generation_prompt=True)
+        try:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": question}],
+                enable_thinking=False, **chat_kwargs,
+            )
+        except TypeError:
+            prompt = tokenizer.apply_chat_template(
+                [{"role": "user", "content": question}], **chat_kwargs,
+            )
         prompts.append(prompt)
         gt = extract_answer(example["solution"])
         ground_truths.append(gt)
