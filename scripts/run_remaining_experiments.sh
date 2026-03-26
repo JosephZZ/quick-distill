@@ -116,11 +116,17 @@ echo "=========================================="
 echo "Starting remaining experiments (2 GPUs)"
 echo "=========================================="
 
-# --- GPU 0: 8B coding + funcall ---
+# --- GPU 0: 8B math + coding + funcall ---
 (
     export CUDA_VISIBLE_DEVICES=0
     S="Qwen/Qwen2.5-Math-1.5B"
     T="Qwen/Qwen3-8B"
+
+    # Math (re-run needed — previous run had too many OOM skips, only step_50 saved)
+    train_run "$S" "$T" "AI-MO/NuminaMath-CoT" "$MATH_SYS" \
+        "checkpoints/fullseq-m1.5b-t8b-math" "fullseq-m1.5b-t8b-math" \
+        "$FULLSEQ_BACKEND --max_new_tokens 3584 --mini_bs 1"
+    eval_checkpoints "$S" "math" "checkpoints/fullseq-m1.5b-t8b-math" "fullseq-m1.5b-t8b-math"
 
     # Coding
     train_run "$S" "$T" "coseal/CodeUltraFeedback_binarized" "$CODING_SYS" \
