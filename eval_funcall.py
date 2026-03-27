@@ -177,12 +177,26 @@ def generate_responses(model_path, problems, output_dir, max_new_tokens=512,
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
 
     # Build prompts
+    # Check if model supports system role
+    _sys_ok = True
+    try:
+        tokenizer.apply_chat_template(
+            [{"role": "system", "content": "test"}, {"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True)
+    except Exception:
+        _sys_ok = False
+
     prompts = []
     for p in problems:
-        messages = [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": p["problem"]},
-        ]
+        if _sys_ok:
+            messages = [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": p["problem"]},
+            ]
+        else:
+            messages = [
+                {"role": "user", "content": SYSTEM_PROMPT + "\n\n" + p["problem"]},
+            ]
         try:
             prompt = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True, enable_thinking=False)
         except TypeError:

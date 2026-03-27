@@ -37,13 +37,31 @@ def _supports_thinking(tokenizer):
         return False
 
 
+def _supports_system_role(tokenizer):
+    """Check if tokenizer's chat template supports system role."""
+    try:
+        tokenizer.apply_chat_template(
+            [{"role": "system", "content": "test"}, {"role": "user", "content": "test"}],
+            tokenize=False, add_generation_prompt=True,
+        )
+        return True
+    except Exception:
+        return False
+
+
 def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
     if system_prompt is None:
         system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": problem},
-    ]
+    if _supports_system_role(tokenizer):
+        messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": problem},
+        ]
+    else:
+        # Prepend system prompt to user message for models without system role (e.g. Gemma 2)
+        messages = [
+            {"role": "user", "content": system_prompt + "\n\n" + problem},
+        ]
     kwargs = dict(tokenize=False, add_generation_prompt=True)
     if _supports_thinking(tokenizer):
         kwargs["enable_thinking"] = False

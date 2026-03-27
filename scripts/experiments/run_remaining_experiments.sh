@@ -163,8 +163,8 @@ PID0=$!
     eval_checkpoints "$S" "funcall" "checkpoints/fullseq-m1.5b-t4b-funcall" "fullseq-m1.5b-t4b-funcall"
 
     # ─── Gemma cross-family ───
-    GS="google/gemma-2-2b"
-    GT="google/gemma-3-4b-pt"
+    GS="google/gemma-2-2b-it"
+    GT="google/gemma-3-4b-it"
 
     # Gemma baseline eval
     eval_baseline "$GS" "gemma"

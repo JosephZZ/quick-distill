@@ -177,7 +177,31 @@ def main():
             if (i + 1) % 50 == 0:
                 print(f"  [{i+1}/{total}] running acc: {correct/(i+1):.4f} ({correct}/{i+1})")
 
-    accuracy = correct / total if total > 0 else 0
+    # Compute all metrics: pass@k, avg@k, maj@k
+    pass_k = correct / total if total > 0 else 0
+
+    # Recompute avg@k and maj@k from results file
+    avg_correct = 0
+    maj_correct = 0
+    with open(results_file, "r") as f:
+        for line in f:
+            result = json.loads(line)
+            evals = result["responses"]
+            gt = result["ground_truth"]
+            n_correct = sum(1 for e in evals if e["is_correct"])
+            # avg@k: fraction of correct samples per problem, averaged
+            avg_correct += n_correct / len(evals) if evals else 0
+            # maj@k: majority vote — pick most common answer
+            answers = [e["extracted_answer"] for e in evals if e["extracted_answer"] is not None]
+            if answers:
+                from collections import Counter
+                most_common = Counter(answers).most_common(1)[0][0]
+                maj_is_correct = math_equal(most_common, gt, timeout=True) if gt is not None else False
+                if maj_is_correct:
+                    maj_correct += 1
+
+    avg_k = avg_correct / total if total > 0 else 0
+    maj_k = maj_correct / total if total > 0 else 0
 
     summary = {
         "model": args.model,
@@ -185,7 +209,10 @@ def main():
         "split": args.split,
         "total": total,
         "correct": correct,
-        "accuracy": accuracy,
+        "accuracy": pass_k,
+        "pass_k": pass_k,
+        "avg_k": avg_k,
+        "maj_k": maj_k,
         "n_samples": args.n_samples,
         "temperature": args.temperature,
     }
@@ -194,7 +221,10 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"Model: {args.model}")
-    print(f"MATH-500 Accuracy: {accuracy:.4f} ({correct}/{total})")
+    print(f"MATH-500 (n={args.n_samples}):")
+    print(f"  pass@{args.n_samples}: {pass_k:.4f} ({correct}/{total})")
+    print(f"  avg@{args.n_samples}:  {avg_k:.4f}")
+    print(f"  maj@{args.n_samples}:  {maj_k:.4f} ({maj_correct}/{total})")
     print(f"Results saved to {args.output_dir}")
     print(f"{'='*50}")
 
