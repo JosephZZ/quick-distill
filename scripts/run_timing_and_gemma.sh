@@ -74,7 +74,7 @@ echo "========== Timing Done =========="
 echo "========== Gemma Pos-100 =========="
 
 GS="google/gemma-2-2b-it"
-GT="google/gemma-3-4b-it"
+GT="google/gemma-2-9b-it"
 
 train_run() {
     local SMODEL=$1 TEACHER=$2 DATASET=$3 SYS_PROMPT=$4 OUTDIR=$5 RUN_NAME=$6 EXTRA=$7

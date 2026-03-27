@@ -142,7 +142,7 @@ run_gemma() {
     local GPU=$1
     export CUDA_VISIBLE_DEVICES=$GPU
     local GS="google/gemma-2-2b-it"
-    local GT="google/gemma-3-4b-it"
+    local GT="google/gemma-2-9b-it"
 
     # Baseline eval
     eval_baseline "$GS" "gemma"
