@@ -591,27 +591,41 @@ def build_vocab_mapping(student_tokenizer, teacher_tokenizer):
 def remap_teacher_logprobs(t_log_probs, vocab_mapping, valid_mask, student_vocab_size):
     """Remap teacher log-probs from teacher vocab order to student vocab order.
     t_log_probs: [seq_len, teacher_vocab] log-probabilities
-    Returns: [seq_len, student_vocab] log-probabilities (unmapped positions get -inf)"""
+    Returns: [seq_len, student_vocab] log-probabilities (unmapped positions get -inf)
+    Only tokens present in both vocabs contribute; others are masked."""
     device = t_log_probs.device
-    mapping = vocab_mapping.to(device)
-    mask = valid_mask.to(device)
+
+    # Work on CPU to avoid CUDA assert issues, then move back
+    t_lp = t_log_probs.float().cpu()
+    mapping = vocab_mapping
+    mask = valid_mask
 
     # Truncate if teacher vocab > mapping size
-    t_size = min(t_log_probs.shape[-1], mapping.shape[0])
-    t_log_probs = t_log_probs[..., :t_size]
-    mapping = mapping[:t_size]
-    mask = mask[:t_size]
+    t_size = min(t_lp.shape[-1], mapping.shape[0])
+    t_lp = t_lp[..., :t_size]
+    mapping_t = mapping[:t_size]
+    mask_t = mask[:t_size]
 
-    # Init with -inf (zero probability for unmapped tokens)
-    result = torch.full((*t_log_probs.shape[:-1], student_vocab_size),
-                        float('-inf'), device=device, dtype=t_log_probs.dtype)
-    # Scatter mapped teacher probs into student positions
-    expanded_mapping = mapping.unsqueeze(0).expand(t_log_probs.shape[0], -1)
-    expanded_mask = mask.unsqueeze(0).expand(t_log_probs.shape[0], -1)
-    result.scatter_(-1, expanded_mapping, t_log_probs.where(expanded_mask, torch.tensor(float('-inf'), device=device)))
-    # Re-normalize (log-softmax over valid entries only)
-    result = log_softmax(result.float(), dim=-1)
-    return result
+    seq_len = t_lp.shape[0]
+
+    # Only keep mapped teacher logprobs, zero out rest before converting to probs
+    # Step 1: mask unmapped teacher positions to -inf
+    t_lp_masked = t_lp.clone()
+    t_lp_masked[:, ~mask_t] = float('-inf')
+
+    # Step 2: renormalize over valid teacher positions only (log-softmax)
+    t_lp_normed = log_softmax(t_lp_masked, dim=-1)
+
+    # Step 3: scatter into student vocab positions
+    result = torch.full((seq_len, student_vocab_size), -100.0)  # very negative but not -inf
+    for i in range(seq_len):
+        valid_idx = mask_t.nonzero(as_tuple=True)[0]
+        result[i, mapping_t[valid_idx]] = t_lp_normed[i, valid_idx]
+
+    # Step 4: renormalize in student vocab space
+    result = log_softmax(result, dim=-1)
+
+    return result.to(device)
 
 
 def load_student(base_model_name, lora_path, device, lora_config=None, full_finetune=False):
