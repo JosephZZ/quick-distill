@@ -164,7 +164,7 @@ PID0=$!
 
     # ─── Gemma cross-family ───
     GS="google/gemma-2-2b-it"
-    GT="google/gemma-2-9b-it"
+    GT="google/gemma-3-4b-it"
 
     # Gemma baseline eval
     eval_baseline "$GS" "gemma"

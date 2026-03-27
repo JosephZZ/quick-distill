@@ -564,6 +564,56 @@ def save_merged_model(student, tokenizer, merged_path):
     return merged_path
 
 
+def build_vocab_mapping(student_tokenizer, teacher_tokenizer):
+    """Build mapping from teacher vocab to student vocab for cross-tokenizer distillation.
+    Returns (teacher_to_student_idx, valid_mask):
+      - teacher_to_student_idx: LongTensor [teacher_vocab] mapping teacher ids to student ids
+      - valid_mask: BoolTensor [teacher_vocab] indicating which teacher ids have a student equivalent
+    Only tokens present in both vocabs are used for KL; others are masked out."""
+    s_vocab = student_tokenizer.get_vocab()  # str → id
+    t_vocab = teacher_tokenizer.get_vocab()  # str → id
+
+    t_size = max(t_vocab.values()) + 1
+    mapping = torch.zeros(t_size, dtype=torch.long)
+    mask = torch.zeros(t_size, dtype=torch.bool)
+
+    mapped = 0
+    for tok_str, t_id in t_vocab.items():
+        if tok_str in s_vocab:
+            mapping[t_id] = s_vocab[tok_str]
+            mask[t_id] = True
+            mapped += 1
+
+    print(f"  Vocab mapping: {mapped}/{len(t_vocab)} teacher tokens mapped to student ({mapped/len(t_vocab):.1%})")
+    return mapping, mask
+
+
+def remap_teacher_logprobs(t_log_probs, vocab_mapping, valid_mask, student_vocab_size):
+    """Remap teacher log-probs from teacher vocab order to student vocab order.
+    t_log_probs: [seq_len, teacher_vocab] log-probabilities
+    Returns: [seq_len, student_vocab] log-probabilities (unmapped positions get -inf)"""
+    device = t_log_probs.device
+    mapping = vocab_mapping.to(device)
+    mask = valid_mask.to(device)
+
+    # Truncate if teacher vocab > mapping size
+    t_size = min(t_log_probs.shape[-1], mapping.shape[0])
+    t_log_probs = t_log_probs[..., :t_size]
+    mapping = mapping[:t_size]
+    mask = mask[:t_size]
+
+    # Init with -inf (zero probability for unmapped tokens)
+    result = torch.full((*t_log_probs.shape[:-1], student_vocab_size),
+                        float('-inf'), device=device, dtype=t_log_probs.dtype)
+    # Scatter mapped teacher probs into student positions
+    expanded_mapping = mapping.unsqueeze(0).expand(t_log_probs.shape[0], -1)
+    expanded_mask = mask.unsqueeze(0).expand(t_log_probs.shape[0], -1)
+    result.scatter_(-1, expanded_mapping, t_log_probs.where(expanded_mask, torch.tensor(float('-inf'), device=device)))
+    # Re-normalize (log-softmax over valid entries only)
+    result = log_softmax(result.float(), dim=-1)
+    return result
+
+
 def load_student(base_model_name, lora_path, device, lora_config=None, full_finetune=False):
     """Load student model (base + optional LoRA, or full finetune)."""
     base = AutoModelForCausalLM.from_pretrained(
@@ -683,6 +733,15 @@ def main():
     _test_ids = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
     # If the tokenizer doesn't know <think> token, it will split into subwords (many ids)
     nothink_ids = _test_ids if len(_test_ids) <= 6 else []
+
+    # Build cross-tokenizer vocab mapping if student and teacher use different tokenizers
+    vocab_mapping = None
+    valid_mask = None
+    if tokenizer.get_vocab() != teacher_tokenizer.get_vocab():
+        print("  Different tokenizers detected — building vocab mapping for cross-tokenizer KL...")
+        vocab_mapping, valid_mask = build_vocab_mapping(tokenizer, teacher_tokenizer)
+    else:
+        print("  Same tokenizer — no vocab mapping needed.")
 
     # Load teacher model on GPU 1 using HF
     teacher_device = f"cuda:{args.teacher_gpu}"
@@ -951,10 +1010,13 @@ def main():
                     limited_labels = shift_labels_i[start:start+eff_len]
                     step_tokens += eff_len
 
-                    # Align vocab sizes if student and teacher have different embedding dimensions
-                    # (e.g. Gemma 3 pads vocab to multiples of 64 for larger models)
-                    min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
-                    if t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
+                    # Cross-tokenizer: remap teacher logprobs to student vocab order
+                    if vocab_mapping is not None:
+                        t_log_probs = remap_teacher_logprobs(
+                            t_log_probs, vocab_mapping, valid_mask, s_log_probs_resp.shape[-1])
+                    # Align vocab sizes if needed (e.g. padding differences)
+                    elif t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
+                        min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
                         t_log_probs = t_log_probs[..., :min_vocab]
                         s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
 
