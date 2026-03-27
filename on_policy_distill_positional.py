@@ -951,6 +951,13 @@ def main():
                     limited_labels = shift_labels_i[start:start+eff_len]
                     step_tokens += eff_len
 
+                    # Align vocab sizes if student and teacher have different embedding dimensions
+                    # (e.g. Gemma 3 pads vocab to multiples of 64 for larger models)
+                    min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
+                    if t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
+                        t_log_probs = t_log_probs[..., :min_vocab]
+                        s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
+
                     loss_traj = kl_div(
                         t_log_probs.to(student_device),
                         s_log_probs_resp,
