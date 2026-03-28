@@ -1,43 +1,24 @@
-# Checkpoints and model weights
+# Model checkpoints (too large)
 checkpoints/
+*.safetensors
+*.bin
 
-# Legacy/archive
-archive/
-
-# Weights & Biases
-wandb/
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-
-# Claude Code
-.claude/
-.claudeprism/
-
-# LaTeX build artifacts
-*.aux
-*.bbl
-*.blg
-*.log
-*.out
-
-# Logs (optional: remove this line if you want logs tracked)
+# Logs and temporary files
 logs/
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Editor
-*.swp
-*.swo
-*~
+*.log
+__pycache__/
 .vscode/
 .idea/
-*.fuse_hidden*
-.aider*
+
+# Large data files
+*.jsonl
+data/
+
+# Virtual environments
+venv/
+env/
+.env
+
+# Notebooks
+*.ipynb
+
