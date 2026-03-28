@@ -244,6 +244,8 @@ Same student–teacher matrix as Sections 2–4 (Configs A–E), but **`position
 
 **Note:** MATH-500 numbers below use the same eval script as pos-100 (`eval_math500.py`, last-`\boxed{}` extraction). Full-seq models may repeat `\boxed{}`; if metrics look inconsistent with samples, consider first-boxed or manual spot checks (see project `CLAUDE.md`).
 
+**Update (2026-03-28):** Fullseq math results are significantly lower than positional distillation (26.2% vs 68.95% for M-1.5B→Q3-4B). This is consistent with previous observations about full-sequence degradation.
+
 ### 7.1 Math (MATH-500, n=4, temp=0.7)
 
 #### avg@4
