@@ -1,0 +1,17 @@
+{
+  "model": "checkpoints/token-select-k100-topkl-math/_eval_merged_step_200",
+  "dataset": "HuggingFaceH4/MATH-500",
+  "split": "test",
+  "total": 500,
+  "correct": 355,
+  "accuracy": 0.71,
+  "pass_correct": 355,
+  "pass_accuracy": 0.71,
+  "maj_correct": 299,
+  "maj_accuracy": 0.598,
+  "avg_accuracy": 0.4865,
+  "sample_correct_total": 973,
+  "sample_total": 2000,
+  "n_samples": 4,
+  "temperature": 0.7
+}
