@@ -258,16 +258,25 @@ All experiments use pos-100, LoRA (r=32), n_samples=1, 3200 problems, 200 steps.
 
 **Improvement**: 73.50% → 82.50% full_acc (+9.0pp). Student surpasses teacher (72.83%).
 
-### Coding
+### Coding (HumanEval / MBPP, pass@1, temp=0.0)
 
-Eval results pending (coding eval uses evalplus which requires separate setup).
+| Step | HE | HE+ | MBPP | MBPP+ |
+|------|-----|------|------|-------|
+| Baseline (gemma-2-2b-it) | 23.8% | 20.1% | 40.5% | 34.7% |
+| 50 | **31.1%** | **26.2%** | 47.1% | 39.2% |
+| 100 | 28.7% | 24.4% | **50.5%** | **42.3%** |
+| 150 | 25.6% | 21.3% | 47.4% | 39.2% |
+| 200 | 26.8% | 22.6% | 46.8% | 38.9% |
+
+**Improvement**: HE+ 20.1% → 26.2% (+6.1pp), MBPP+ 34.7% → 42.3% (+7.6pp). Best at step 50 (HE) and step 100 (MBPP).
 
 ### Cross-Family Key Findings
 
-1. **Positional distillation works across model families.** Gemma-2-2b-it → Gemma-3-4b-it shows clear improvements on both math (+13.75pp) and funcall (+9.0pp).
+1. **Positional distillation works across model families.** Gemma-2-2b-it → Gemma-3-4b-it shows improvements on all three tasks: math (+13.75pp), funcall (+9.0pp), and coding (HE+ +6.1pp, MBPP+ +7.6pp).
 2. **Student surpasses teacher on funcall.** Distilled student achieves 82.50% vs teacher's 72.83%, consistent with the Qwen results where on-policy distillation can exceed teacher performance.
 3. **Math improvement is proportionally large.** From 13.45% to 27.20% is a 2x improvement, demonstrating that positional distillation transfers reasoning strategies even across architectures.
 4. **Training is stable.** All steps show consistent performance (27% ± 0.5%), no degradation observed.
+5. **Cross-tokenizer distillation requires re-tokenization.** Gemma 2 and 3 have incompatible token IDs (only 69% overlap by string matching). Successful distillation required: (a) re-tokenizing student text with teacher tokenizer for scoring, (b) shared-vocab KL loss with numerical clamping, (c) character-level position alignment between tokenizations.
 
 ---
 

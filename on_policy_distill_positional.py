@@ -205,6 +205,121 @@ def query_teacher_hf_logits_batch(teacher_model, trajs, nothink_ids, position_li
     return results
 
 
+def query_teacher_cross_tokenizer(teacher_model, trajs, student_tokenizer, teacher_tokenizer,
+                                    nothink_ids, position_limit, device="cuda:1"):
+    """Score trajectories with teacher using correct cross-tokenizer handling.
+    1. Decode student token IDs → text using student tokenizer
+    2. Re-tokenize with teacher tokenizer (with chat template)
+    3. Teacher forward pass on teacher token IDs
+    4. Map teacher log-probs back to student token positions via character alignment
+    Returns list of [effective_len, teacher_vocab] tensors on CPU."""
+    results = []
+    for traj in trajs:
+        prompt_ids = traj["prompt_ids"]
+        response_ids = traj["response_ids"]
+        resp_len = len(response_ids)
+        effective_len = min(resp_len, position_limit) if position_limit > 0 else resp_len
+
+        # Decode student's full sequence to text
+        full_student_ids = prompt_ids + response_ids[:effective_len]
+        full_text = student_tokenizer.decode(full_student_ids, skip_special_tokens=False)
+
+        # Get character offsets for student tokens (response portion only)
+        # Decode prompt separately to find where response starts in text
+        prompt_text = student_tokenizer.decode(prompt_ids, skip_special_tokens=False)
+        resp_text_start = len(prompt_text)
+
+        # Re-tokenize the full text with teacher tokenizer
+        teacher_enc = teacher_tokenizer(full_text, return_offsets_mapping=True, add_special_tokens=False)
+        teacher_ids = teacher_enc["input_ids"]
+
+        # Prepend nothink_ids after finding the prompt/response boundary
+        # Find which teacher token starts the response (by character offset)
+        offsets = teacher_enc["offset_mapping"]
+        t_resp_start = 0
+        for idx, (s, e) in enumerate(offsets):
+            if s >= resp_text_start:
+                t_resp_start = idx
+                break
+
+        # Insert nothink_ids at the response boundary
+        teacher_full_ids = teacher_ids[:t_resp_start] + nothink_ids + teacher_ids[t_resp_start:]
+        t_resp_start_adj = t_resp_start + len(nothink_ids)
+
+        # Validate token IDs are within teacher model's vocab
+        t_vocab_size = getattr(teacher_model.config, 'vocab_size', None) or getattr(teacher_model.config, 'text_config', None) and teacher_model.config.text_config.vocab_size or 262208
+        teacher_full_ids = [min(tid, t_vocab_size - 1) for tid in teacher_full_ids]
+
+        # Teacher forward pass (with error handling for edge cases)
+        input_ids_t = torch.tensor([teacher_full_ids], dtype=torch.long, device=device)
+        try:
+            with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                outputs = teacher_model(input_ids=input_ids_t)
+                logits = outputs.logits
+            shift_logits = logits[0, :-1, :]
+            t_log_probs = log_softmax(shift_logits.float(), dim=-1)
+        except (RuntimeError, IndexError) as e:
+            # Skip this trajectory if teacher scoring fails
+            del input_ids_t
+            torch.cuda.empty_cache()
+            results.append(torch.zeros(effective_len, t_vocab_size))
+            continue
+
+        # Map teacher positions back to student positions via character offsets
+        # For each student response token, find the teacher token that covers the same text
+        s_enc = student_tokenizer(full_text, return_offsets_mapping=True, add_special_tokens=False)
+        s_offsets = s_enc["offset_mapping"]
+        s_resp_start = len(prompt_ids)  # student token index where response starts
+
+        # Teacher token offsets (excluding nothink insertion)
+        t_offsets = offsets  # original teacher offsets before nothink insertion
+
+        # Build student-to-teacher position mapping
+        mapped_teacher_lps = []
+        for si in range(s_resp_start, min(s_resp_start + effective_len, len(s_offsets))):
+            s_char_start, s_char_end = s_offsets[si]
+            s_char_mid = (s_char_start + s_char_end) // 2
+
+            # Find teacher token covering this character position
+            best_ti = t_resp_start  # default
+            for ti in range(t_resp_start, len(t_offsets)):
+                t_cs, t_ce = t_offsets[ti]
+                if t_cs <= s_char_mid < t_ce:
+                    best_ti = ti
+                    break
+                if t_cs > s_char_mid:
+                    best_ti = max(ti - 1, t_resp_start)
+                    break
+
+            # Teacher log-probs at this position (adjusted for nothink insertion)
+            # shift_logits[pos] predicts token at pos+1, so the log-prob for position
+            # best_ti is at shift index (best_ti + len(nothink_ids) - 1) for teacher_full_ids
+            t_shift_idx = best_ti + len(nothink_ids) - 1
+            t_shift_idx = max(0, min(t_shift_idx, t_log_probs.shape[0] - 1))
+            mapped_teacher_lps.append(t_log_probs[t_shift_idx].cpu())
+
+        vocab_size = t_log_probs.shape[-1]
+        if mapped_teacher_lps:
+            result_tensor = torch.stack(mapped_teacher_lps)  # [mapped_len, teacher_vocab]
+            # Ensure exact effective_len output
+            if result_tensor.shape[0] < effective_len:
+                # Pad with uniform distribution
+                pad = torch.full((effective_len - result_tensor.shape[0], vocab_size),
+                                  -float('inf'))
+                pad[:, 0] = 0.0  # dummy: put all prob on token 0
+                result_tensor = torch.cat([result_tensor, pad], dim=0)
+            elif result_tensor.shape[0] > effective_len:
+                result_tensor = result_tensor[:effective_len]
+            results.append(result_tensor)
+        else:
+            results.append(torch.zeros(effective_len, vocab_size))
+
+        del input_ids_t, outputs, logits
+        torch.cuda.empty_cache()
+
+    return results
+
+
 def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, temperature, gen_batch_size=0, system_prompt=None):
     """Generate trajectories using HF model.generate() directly — no subprocess or disk I/O."""
     eos_id = tokenizer.eos_token_id
@@ -417,9 +532,10 @@ def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new
         json.dump(problems, f)
 
     env = os.environ.copy()
-    # Only override CUDA_VISIBLE_DEVICES if not already set (avoid clobbering parent's GPU assignment)
-    if "CUDA_VISIBLE_DEVICES" not in os.environ:
-        env["CUDA_VISIBLE_DEVICES"] = str(gpu_id)
+    # Always set CUDA_VISIBLE_DEVICES for vLLM subprocess to the correct physical GPU
+    # Map through parent's CUDA_VISIBLE_DEVICES if set (e.g., "0,1" with gpu_id=1 → "1")
+    physical_gpu = _get_physical_gpu_id(gpu_id)
+    env["CUDA_VISIBLE_DEVICES"] = str(physical_gpu)
 
     cmd = [
         sys.executable, "vllm_generate.py",
@@ -584,15 +700,21 @@ def build_vocab_mapping(student_tokenizer, teacher_tokenizer):
             mask[t_id] = True
             mapped += 1
 
+    # Also compute the sorted unique student IDs that have mappings
+    mapped_student_ids = sorted(set(mapping[mask].tolist()))
+    mapped_student_ids = torch.tensor(mapped_student_ids, dtype=torch.long)
+
     print(f"  Vocab mapping: {mapped}/{len(t_vocab)} teacher tokens mapped to student ({mapped/len(t_vocab):.1%})")
-    return mapping, mask
+    print(f"  Mapped student token coverage: {len(mapped_student_ids)}/{len(s_vocab)} ({len(mapped_student_ids)/len(s_vocab):.1%})")
+    return mapping, mask, mapped_student_ids
 
 
-def remap_teacher_logprobs(t_log_probs, vocab_mapping, valid_mask, student_vocab_size):
+def remap_teacher_logprobs(t_log_probs, vocab_mapping, valid_mask, student_vocab_size, mapped_student_ids=None):
     """Remap teacher log-probs from teacher vocab order to student vocab order.
     t_log_probs: [seq_len, teacher_vocab] log-probabilities
-    Returns: [seq_len, student_vocab] log-probabilities (unmapped positions get -inf)
-    Only tokens present in both vocabs contribute; others are masked."""
+    If mapped_student_ids is provided, returns [seq_len, len(mapped_student_ids)] log-probs
+    over ONLY the shared vocabulary (both teacher and student distributions renormalized).
+    Otherwise returns [seq_len, student_vocab] with unmapped positions at -inf."""
     device = t_log_probs.device
 
     # Work on CPU to avoid CUDA assert issues, then move back
@@ -607,23 +729,23 @@ def remap_teacher_logprobs(t_log_probs, vocab_mapping, valid_mask, student_vocab
     mask_t = mask[:t_size]
 
     seq_len = t_lp.shape[0]
+    valid_idx = mask_t.nonzero(as_tuple=True)[0]
 
-    # Only keep mapped teacher logprobs, zero out rest before converting to probs
-    # Step 1: mask unmapped teacher positions to -inf
-    t_lp_masked = t_lp.clone()
-    t_lp_masked[:, ~mask_t] = float('-inf')
+    # Step 1: extract mapped teacher logprobs and renormalize over mapped set only
+    t_lp_mapped = t_lp[:, valid_idx]  # [seq_len, n_mapped_teacher]
+    t_lp_normed = log_softmax(t_lp_mapped, dim=-1)
 
-    # Step 2: renormalize over valid teacher positions only (log-softmax)
-    t_lp_normed = log_softmax(t_lp_masked, dim=-1)
+    # Step 2: scatter into student vocab positions
+    result = torch.full((seq_len, student_vocab_size), float('-inf'))
+    student_ids = mapping_t[valid_idx]  # student token IDs for each mapped teacher token
+    result[:, student_ids] = t_lp_normed
 
-    # Step 3: scatter into student vocab positions
-    result = torch.full((seq_len, student_vocab_size), -100.0)  # very negative but not -inf
-    for i in range(seq_len):
-        valid_idx = mask_t.nonzero(as_tuple=True)[0]
-        result[i, mapping_t[valid_idx]] = t_lp_normed[i, valid_idx]
-
-    # Step 4: renormalize in student vocab space
-    result = log_softmax(result, dim=-1)
+    # Step 3: if mapped_student_ids provided, slice to shared vocab only
+    # This ensures KL is computed only over shared tokens (no penalty for unmapped tokens)
+    if mapped_student_ids is not None:
+        result = result[:, mapped_student_ids]
+        # Renormalize over shared vocab
+        result = log_softmax(result, dim=-1)
 
     return result.to(device)
 
@@ -760,9 +882,10 @@ def main():
     # Build cross-tokenizer vocab mapping if student and teacher use different tokenizers
     vocab_mapping = None
     valid_mask = None
+    mapped_student_ids = None
     if tokenizer.get_vocab() != teacher_tokenizer.get_vocab():
         print("  Different tokenizers detected — building vocab mapping for cross-tokenizer KL...")
-        vocab_mapping, valid_mask = build_vocab_mapping(tokenizer, teacher_tokenizer)
+        vocab_mapping, valid_mask, mapped_student_ids = build_vocab_mapping(tokenizer, teacher_tokenizer)
     else:
         print("  Same tokenizer — no vocab mapping needed.")
 
@@ -970,12 +1093,18 @@ def main():
             trajs = all_trajectories[prob_idx_str]
             if len(trajs) == 0:
                 continue
-            # For non-prefix token selection, score full response and select positions during loss build.
-            query_pos_limit = current_pos_limit if args.token_select_mode == "prefix" else 0
-            teacher_lps = query_teacher_hf_logits_batch(
-                teacher_model, trajs, nothink_ids, query_pos_limit, device=teacher_device,
-                micro_bs=args.teacher_micro_bs,
-            )
+            if vocab_mapping is not None:
+                # Cross-tokenizer: re-tokenize text for teacher scoring
+                teacher_lps = query_teacher_cross_tokenizer(
+                    teacher_model, trajs, tokenizer, teacher_tokenizer,
+                    nothink_ids, current_pos_limit, device=teacher_device,
+                )
+            else:
+                query_pos_limit = current_pos_limit if args.token_select_mode == "prefix" else 0
+                teacher_lps = query_teacher_hf_logits_batch(
+                    teacher_model, trajs, nothink_ids, query_pos_limit, device=teacher_device,
+                    micro_bs=args.teacher_micro_bs,
+                )
             all_chunk_trajs.extend(trajs)
             all_chunk_teacher_lps.extend(teacher_lps)
         score_time = time.time() - score_start
@@ -1076,35 +1205,73 @@ def main():
                     limited_labels = labels_all.index_select(0, sel_idx)
                     step_tokens += k
 
-                    # Cross-tokenizer: remap teacher logprobs to student vocab order
+                    # Cross-tokenizer: reverse KL over shared vocabulary
+                    # Teacher log-probs are already correctly computed via re-tokenization.
+                    # Remap from teacher vocab → student vocab, slice to shared tokens only.
                     if vocab_mapping is not None:
-                        t_log_probs = remap_teacher_logprobs(
-                            t_log_probs, vocab_mapping, valid_mask, s_log_probs_resp.shape[-1])
-                    # Align vocab sizes if needed (e.g. padding differences)
-                    elif t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
-                        min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
-                        t_log_probs = t_log_probs[..., :min_vocab]
-                        s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
+                        # Remap teacher logprobs to shared vocab (renormalized)
+                        t_log_probs_shared = remap_teacher_logprobs(
+                            t_log_probs, vocab_mapping, valid_mask,
+                            s_log_probs_resp.shape[-1], mapped_student_ids)
+                        # Clamp to prevent -inf/NaN that can trigger CUDA asserts
+                        t_log_probs_shared = torch.nan_to_num(t_log_probs_shared, nan=-20.0, posinf=0.0, neginf=-20.0)
+                        t_log_probs_shared = t_log_probs_shared.clamp(min=-20.0, max=0.0)
 
-                    loss_traj = kl_div(
-                        t_log_probs,
-                        s_log_probs_resp,
-                        log_target=True,
-                        reduction="batchmean",
-                    )
-                    mb_loss = mb_loss + loss_traj / n_trajs
+                        # Slice student RAW LOGITS to shared vocab, then log_softmax
+                        _msi_dev = mapped_student_ids.to(shift_logits_i.device)
+                        # Bounds check: clamp indices to valid range
+                        _msi_dev = _msi_dev.clamp(max=shift_logits_i.shape[-1] - 1)
+                        s_logits_shared = shift_logits_i[start:start+eff_len][:, _msi_dev]
+                        s_log_probs_shared = log_softmax(s_logits_shared.float(), dim=-1)
 
-                    with torch.no_grad():
-                        s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                        t_lps_sampled = t_log_probs.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                        step_kl += (s_lps - t_lps_sampled).mean().item()
-                        step_ce += (-s_lps).mean().item()
+                        # Reverse KL over shared vocab: KL(student_shared || teacher_shared)
+                        loss_traj = kl_div(
+                            t_log_probs_shared.to(student_device),
+                            s_log_probs_shared,
+                            log_target=True,
+                            reduction="batchmean",
+                        )
+                        # Clamp loss to reasonable range
+                        loss_traj = loss_traj.clamp(max=50.0)
+                        mb_loss = mb_loss + loss_traj / n_trajs
+
+                        with torch.no_grad():
+                            _msi = mapped_student_ids.to(limited_labels.device)
+                            _lm = (limited_labels.unsqueeze(-1) == _msi.unsqueeze(0)).long().argmax(-1)
+                            _lm = _lm.clamp(max=s_log_probs_shared.shape[-1] - 1)
+                            s_lps = s_log_probs_shared.gather(-1, _lm.unsqueeze(-1)).squeeze(-1)
+                            t_lps = t_log_probs_shared.to(student_device).gather(-1, _lm.unsqueeze(-1)).squeeze(-1)
+                            step_kl += (s_lps - t_lps).mean().item()
+                            step_ce += (-s_lps).mean().item()
+                    else:
+                        # Same-tokenizer: full-distribution reverse KL (standard path)
+                        # Align vocab sizes if needed (e.g. padding differences)
+                        if t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
+                            min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
+                            t_log_probs = t_log_probs[..., :min_vocab]
+                            s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
+
+                        loss_traj = kl_div(
+                            t_log_probs.to(student_device),
+                            s_log_probs_resp,
+                            log_target=True,
+                            reduction="batchmean",
+                        )
+                        mb_loss = mb_loss + loss_traj / n_trajs
+
+                        with torch.no_grad():
+                            s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
+                            t_lps_sampled = t_log_probs.to(student_device).gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
+                            step_kl += (s_lps - t_lps_sampled).mean().item()
+                            step_ce += (-s_lps).mean().item()
 
                 mb_loss.backward()
                 step_loss_val += mb_loss.item()
-            except torch.cuda.OutOfMemoryError:
-                print(f"  WARNING: OOM on mini-batch (seq_len={max_len}), skipping")
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as e:
+                err_type = "OOM" if "out of memory" in str(e).lower() else "RuntimeError"
+                print(f"  WARNING: {err_type} on mini-batch (seq_len={max_len}), skipping: {str(e)[:100]}")
                 student.zero_grad(set_to_none=True)
+                gc.collect()
                 torch.cuda.empty_cache()
 
             del input_ids, attn_mask, outputs

@@ -1,7 +1,5 @@
 #!/bin/bash
-# Gemma cross-family: gemma-2-2b-it → gemma-3-4b-it (with vocab mapping)
-# Phase 1 (parallel): pos-100 on GPU 0, baseline eval on GPU 1
-# Phase 2 (sequential): fullseq on both GPUs (student=GPU1, teacher=GPU0)
+# Run ONLY the fullseq phase (pos-100 already complete)
 set -e
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export CUDA_VISIBLE_DEVICES=0,1
@@ -26,7 +24,7 @@ train_run() {
         --dataset "$DATASET" --num_problems 3200 \
         --bs 16 --n_samples 1 --temperature 0.7 \
         --lr $LR --lora_r $LORA_R --lora_alpha $LORA_ALPHA \
-        --save_steps 50 --log_steps 10 --eval_steps 0 \
+        --save_steps 25 --log_steps 10 --eval_steps 0 \
         --student_gpu $SGPU --teacher_gpu $TGPU \
         --system_prompt "$SYS_PROMPT" \
         --wandb_project dft-distill-gemma \
@@ -75,60 +73,6 @@ m.save_pretrained('$MP'); AutoTokenizer.from_pretrained('$SMODEL',trust_remote_c
     done
 }
 
-eval_baseline() {
-    local MODEL=$1 NAME=$2 EVAL_GPU=$3
-    local BASE="checkpoints/${NAME}-baseline"
-    for TASK in math coding funcall; do
-        ED="$BASE/eval_${TASK}"
-        [ -f "$ED/summary.json" ] && continue
-        mkdir -p "$ED"
-        echo "=== Baseline $NAME $TASK ==="
-        eval_task "$TASK" "$MODEL" "$ED" "$EVAL_GPU"
-    done
-}
-
-# ============================================================
-# Phase 1: Pos-100 on GPU 0, baseline eval on GPU 1 (parallel)
-# ============================================================
-echo "=== PHASE 1: pos-100 + baseline (parallel) ==="
-
-(
-    # Pos-100: student+teacher both on GPU 0 (fits: 5GB+8GB < 48GB for HF generate)
-    # Pos-100 math
-    train_run "$GS" "$GT" "AI-MO/NuminaMath-CoT" "$MATH_SYS" \
-        "checkpoints/gemma-pos100-math" "gemma-pos100-math" 0 0 "--position_limit 100"
-    eval_checkpoints "$GS" "math" "checkpoints/gemma-pos100-math" "gemma-pos100-math" 0
-
-    # Pos-100 coding
-    train_run "$GS" "$GT" "coseal/CodeUltraFeedback_binarized" "$CODING_SYS" \
-        "checkpoints/gemma-pos100-coding" "gemma-pos100-coding" 0 0 "--position_limit 100 --problem_field instruction"
-    eval_checkpoints "$GS" "coding" "checkpoints/gemma-pos100-coding" "gemma-pos100-coding" 0
-
-    # Pos-100 funcall
-    train_run "$GS" "$GT" "data/funcall/train.jsonl" "$FUNCALL_SYS" \
-        "checkpoints/gemma-pos100-funcall" "gemma-pos100-funcall" 0 0 "--position_limit 100 --problem_field problem"
-    eval_checkpoints "$GS" "funcall" "checkpoints/gemma-pos100-funcall" "gemma-pos100-funcall" 0
-
-    echo "=== POS-100 ALL DONE ==="
-) > logs/gemma_pos100.log 2>&1 &
-PID_POS=$!
-
-(
-    # Baseline eval on GPU 1
-    eval_baseline "$GS" "gemma" 1
-    echo "=== BASELINE DONE ==="
-) > logs/gemma_baseline.log 2>&1 &
-PID_BASE=$!
-
-echo "Pos-100 PID: $PID_POS, Baseline PID: $PID_BASE"
-
-# Wait for BOTH to finish before Phase 2
-wait $PID_POS; echo "Pos-100 finished"
-wait $PID_BASE; echo "Baseline finished"
-
-# ============================================================
-# Phase 2: Full-seq on both GPUs (sequential after pos-100)
-# ============================================================
 echo "=== PHASE 2: fullseq (student=GPU1, teacher=GPU0) ==="
 
 # Full-seq math
@@ -149,4 +93,4 @@ train_run "$GS" "$GT" "data/funcall/train.jsonl" "$FUNCALL_SYS" \
     "--position_limit 0 --use_vllm --max_new_tokens 3584 --vllm_gpu_util 0.70 --problem_field problem"
 eval_checkpoints "$GS" "funcall" "checkpoints/gemma-fullseq-funcall" "gemma-fullseq-funcall" 1
 
-echo "=== ALL GEMMA DONE ==="
+echo "=== ALL GEMMA FULLSEQ DONE ==="

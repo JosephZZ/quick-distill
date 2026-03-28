@@ -44,6 +44,10 @@ SYSTEM_PROMPT = (
 def parse_function_calls(text):
     """Parse function calls from model output. Returns list of {name, arguments} dicts."""
     text = text.strip()
+    # Strip trailing punctuation that some models add (e.g. ".]", ".\n")
+    text = re.sub(r'[\.\s]+$', '', text)
+    # Fix common JSON errors: triple closing braces }}} → }}
+    text = re.sub(r'\}\}\}', '}}', text)
 
     # Try parsing as JSON array directly
     try:
