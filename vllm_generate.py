@@ -10,6 +10,26 @@ import argparse
 from transformers import AutoTokenizer
 from vllm import LLM, SamplingParams
 
+# vLLM 0.11 caches tokenizer.all_special_tokens_extended; Qwen2Tokenizer omits it in transformers>=5.0.
+try:
+    from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer as _Q2Tok
+
+    if not hasattr(_Q2Tok, "all_special_tokens_extended"):
+        _Q2Tok.all_special_tokens_extended = property(
+            lambda self: list(getattr(self, "all_special_tokens", []) or [])
+        )
+except Exception:
+    pass
+try:
+    from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast as _Q2TokF
+
+    if not hasattr(_Q2TokF, "all_special_tokens_extended"):
+        _Q2TokF.all_special_tokens_extended = property(
+            lambda self: list(getattr(self, "all_special_tokens", []) or [])
+        )
+except Exception:
+    pass
+
 
 def _supports_thinking(tokenizer):
     """Check if tokenizer supports enable_thinking parameter (Qwen3, Gemma3, etc.)."""

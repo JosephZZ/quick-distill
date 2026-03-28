@@ -172,6 +172,17 @@ def generate_responses(model_path, problems, output_dir, max_new_tokens=512,
                        batch_size=8):
     """Generate responses using vLLM."""
     from transformers import AutoTokenizer
+
+    # vLLM 0.11 / torch-triton compatibility shim:
+    try:
+        import triton.compiler.compiler as _triton_compiler
+        if not hasattr(_triton_compiler, "triton_key"):
+            def _triton_key():
+                return "unknown"
+            _triton_compiler.triton_key = _triton_key
+    except Exception:
+        pass
+
     from vllm import LLM, SamplingParams
 
     tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)

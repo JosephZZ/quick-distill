@@ -1,0 +1,7 @@
+# Install: crontab -l 2>/dev/null | grep -v scaling_fullseq_watchdog; cat /sg-pvc/quick-distillation/scripts/crontab_scaling_fullseq.txt | grep -v '^#' | crontab -
+# Or append the single line below to your crontab.
+
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+*/5 * * * * flock -n /tmp/scaling_fullseq_watchdog.lock /sg-pvc/quick-distillation/scripts/scaling_fullseq_watchdog.sh >> /sg-pvc/quick-distillation/logs/scaling_fullseq_watchdog.cron.log 2>&1

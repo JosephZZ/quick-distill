@@ -15,15 +15,45 @@ import os
 import sys
 import re
 import argparse
+from collections import Counter
+
+# vLLM 0.11 + transformers 5.x compatibility fix
+from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer
+if not hasattr(Qwen2Tokenizer, "all_special_tokens_extended"):
+    Qwen2Tokenizer.all_special_tokens_extended = property(lambda self: list(getattr(self, "all_special_tokens", []) or []))
+try:
+    from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast
+    if not hasattr(Qwen2TokenizerFast, "all_special_tokens_extended"):
+        Qwen2TokenizerFast.all_special_tokens_extended = property(lambda self: list(getattr(self, "all_special_tokens", []) or []))
+except ImportError:
+    pass
 
 import numpy as np
 import torch
 from datasets import load_dataset
 from transformers import AutoTokenizer
+
+# vLLM 0.11 / torch-triton compatibility shim:
+# some envs miss triton.compiler.compiler.triton_key, which vLLM imports via torch inductor.
+try:
+    import triton.compiler.compiler as _triton_compiler
+    if not hasattr(_triton_compiler, "triton_key"):
+        def _triton_key():
+            return "unknown"
+        _triton_compiler.triton_key = _triton_key
+except Exception:
+    pass
+
 from vllm import LLM, SamplingParams
 
-# Add math_evaluation to path for math_equal
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "math_evaluation"))
+# Prefer local stub grader used in this repo; fall back to bundled math_evaluation.
+_repo_dir = os.path.dirname(os.path.abspath(__file__))
+_stub_dir = os.path.join(_repo_dir, "math_eval_stub")
+_fallback_dir = os.path.join(_repo_dir, "math_evaluation")
+if os.path.isdir(_stub_dir):
+    sys.path.insert(0, _stub_dir)
+else:
+    sys.path.insert(0, _fallback_dir)
 from grader import math_equal
 
 
@@ -76,6 +106,12 @@ def extract_answer(solution_str):
         return None
 
 
+def normalize_answer_for_vote(ans):
+    if ans is None:
+        return None
+    return re.sub(r"\s+", " ", str(ans)).strip()
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", type=str, required=True)
@@ -95,6 +131,7 @@ def main():
         model=args.model,
         tokenizer=args.model,
         dtype="bfloat16",
+        enforce_eager=True,
         max_model_len=args.max_model_len,
         seed=42,
         trust_remote_code=True,
@@ -140,7 +177,11 @@ def main():
     # Evaluate — stream results to jsonl
     os.makedirs(args.output_dir, exist_ok=True)
     results_file = os.path.join(args.output_dir, "results.jsonl")
-    correct = 0
+    pass_correct = 0
+    maj_correct = 0
+    avg_correct_sum = 0.0
+    sample_correct_total = 0
+    sample_total = 0
     total = len(outputs)
 
     with open(results_file, "w") as f:
@@ -148,71 +189,89 @@ def main():
             gt = ground_truths[i]
 
             response_evals = []
-            any_correct = False
+            sample_flags = []
             for out in output.outputs:
                 response = out.text
                 extracted = extract_answer(response)
                 is_correct = math_equal(extracted, gt, timeout=True) if (extracted is not None and gt is not None) else False
+                sample_flags.append(is_correct)
                 response_evals.append({
                     "response": response,
                     "extracted_answer": extracted,
                     "is_correct": is_correct,
                 })
-                if is_correct:
-                    any_correct = True
+            pass_hit = any(sample_flags)
+            if pass_hit:
+                pass_correct += 1
 
-            if any_correct:
-                correct += 1
+            sample_n = len(sample_flags)
+            sample_total += sample_n
+            sample_correct_total += sum(1 for x in sample_flags if x)
+            avg_hit = (sum(1 for x in sample_flags if x) / sample_n) if sample_n > 0 else 0.0
+            avg_correct_sum += avg_hit
+
+            # Majority vote on extracted answers (ignore None); tie-break by earliest appearance.
+            vote_counts = Counter()
+            first_pos = {}
+            repr_answer = {}
+            for j, r in enumerate(response_evals):
+                raw_ans = r["extracted_answer"]
+                key = normalize_answer_for_vote(raw_ans)
+                if key is None or key == "":
+                    continue
+                vote_counts[key] += 1
+                if key not in first_pos:
+                    first_pos[key] = j
+                    repr_answer[key] = raw_ans
+            maj_answer = None
+            maj_hit = False
+            if vote_counts:
+                best_cnt = max(vote_counts.values())
+                cands = [k for k, c in vote_counts.items() if c == best_cnt]
+                maj_key = sorted(cands, key=lambda k: first_pos[k])[0]
+                maj_answer = repr_answer[maj_key]
+                maj_hit = math_equal(maj_answer, gt, timeout=True) if gt is not None else False
+            if maj_hit:
+                maj_correct += 1
 
             result = {
                 "idx": i,
                 "question": ds[i]["problem"],
                 "ground_truth": gt,
                 "responses": response_evals,
-                "any_correct": any_correct,
+                "pass_correct": pass_hit,
+                "maj_answer": maj_answer,
+                "maj_correct": maj_hit,
+                "avg_correct": avg_hit,
             }
             f.write(json.dumps(result, ensure_ascii=False) + "\n")
             f.flush()
 
             if (i + 1) % 50 == 0:
-                print(f"  [{i+1}/{total}] running acc: {correct/(i+1):.4f} ({correct}/{i+1})")
+                print(
+                    f"  [{i+1}/{total}] pass={pass_correct/(i+1):.4f} "
+                    f"maj={maj_correct/(i+1):.4f} avg={avg_correct_sum/(i+1):.4f}"
+                )
 
-    # Compute all metrics: pass@k, avg@k, maj@k
-    pass_k = correct / total if total > 0 else 0
-
-    # Recompute avg@k and maj@k from results file
-    avg_correct = 0
-    maj_correct = 0
-    with open(results_file, "r") as f:
-        for line in f:
-            result = json.loads(line)
-            evals = result["responses"]
-            gt = result["ground_truth"]
-            n_correct = sum(1 for e in evals if e["is_correct"])
-            # avg@k: fraction of correct samples per problem, averaged
-            avg_correct += n_correct / len(evals) if evals else 0
-            # maj@k: majority vote — pick most common answer
-            answers = [e["extracted_answer"] for e in evals if e["extracted_answer"] is not None]
-            if answers:
-                from collections import Counter
-                most_common = Counter(answers).most_common(1)[0][0]
-                maj_is_correct = math_equal(most_common, gt, timeout=True) if gt is not None else False
-                if maj_is_correct:
-                    maj_correct += 1
-
-    avg_k = avg_correct / total if total > 0 else 0
-    maj_k = maj_correct / total if total > 0 else 0
+    pass_accuracy = pass_correct / total if total > 0 else 0.0
+    maj_accuracy = maj_correct / total if total > 0 else 0.0
+    avg_accuracy = avg_correct_sum / total if total > 0 else 0.0
 
     summary = {
         "model": args.model,
         "dataset": args.dataset,
         "split": args.split,
         "total": total,
-        "correct": correct,
-        "accuracy": pass_k,
-        "pass_k": pass_k,
-        "avg_k": avg_k,
-        "maj_k": maj_k,
+        # Backward-compatible fields map to pass@k.
+        "correct": pass_correct,
+        "accuracy": pass_accuracy,
+        "pass_correct": pass_correct,
+        "pass_accuracy": pass_accuracy,
+        "maj_correct": maj_correct,
+        "maj_accuracy": maj_accuracy,
+        "avg_accuracy": avg_accuracy,
+        "sample_correct_total": sample_correct_total,
+        "sample_total": sample_total,
         "n_samples": args.n_samples,
         "temperature": args.temperature,
     }
@@ -221,10 +280,9 @@ def main():
 
     print(f"\n{'='*50}")
     print(f"Model: {args.model}")
-    print(f"MATH-500 (n={args.n_samples}):")
-    print(f"  pass@{args.n_samples}: {pass_k:.4f} ({correct}/{total})")
-    print(f"  avg@{args.n_samples}:  {avg_k:.4f}")
-    print(f"  maj@{args.n_samples}:  {maj_k:.4f} ({maj_correct}/{total})")
+    print(f"MATH-500 pass@{args.n_samples}: {pass_accuracy:.4f} ({pass_correct}/{total})")
+    print(f"MATH-500 maj@{args.n_samples}:  {maj_accuracy:.4f} ({maj_correct}/{total})")
+    print(f"MATH-500 avg@{args.n_samples}:  {avg_accuracy:.4f}")
     print(f"Results saved to {args.output_dir}")
     print(f"{'='*50}")
 

@@ -1,5 +1,16 @@
 """Evaluate models on HumanEval/MBPP using evalplus with custom vLLM gpu_memory_utilization."""
 import argparse, json, os, sys
+
+# vLLM 0.11 / torch-triton compatibility shim:
+try:
+    import triton.compiler.compiler as _triton_compiler
+    if not hasattr(_triton_compiler, "triton_key"):
+        def _triton_key():
+            return "unknown"
+        _triton_compiler.triton_key = _triton_key
+except Exception:
+    pass
+
 from vllm import LLM, SamplingParams
 from evalplus.data import get_human_eval_plus, get_mbpp_plus
 

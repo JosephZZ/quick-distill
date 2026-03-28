@@ -1,8 +1,6 @@
 #!/bin/bash
-# Model size scaling experiments — GPU 1 only (student+teacher on cuda:0 of this process = physical GPU 1)
-# Teacher: Qwen3-8B
-# Configs: D (Qwen3-1.7B student) + B (Math-1.5B student) + E (Qwen3-4B student)
-# Tasks: Math, Coding, Funcall
+# Config C (Qwen3-1.7B student + Qwen3-4B teacher) — GPU 0, NO VLLM, use HF generate
+# For stability when vLLM keeps crashing
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -11,20 +9,24 @@ cd "$BASE_DIR"
 mkdir -p logs
 
 [ -f "${HOME}/.bashrc" ] && PS1=nonempty source "${HOME}/.bashrc" 2>/dev/null || true
-# shellcheck disable=SC1091
 source "$SCRIPT_DIR/hf_models_env.sh"
 
-TEACHER="$QWEN3_8"
-POS=100
+TEACHER="$QWEN3_4"
+C_STUDENT="$QWEN3_17"
+
 LR=5e-5
 LORA_R=32
 LORA_ALPHA=64
 
+# NO --use_vllm, use HF generate instead
+# Lower max_new_tokens for HF to avoid OOM
+HF_MATH_EXTRA="--max_new_tokens 1024 --teacher_micro_bs 2"
+HF_CODE_EXTRA="--max_new_tokens 512 --teacher_micro_bs 4"
+HF_FUNCALL_EXTRA="--max_new_tokens 512 --teacher_micro_bs 4"
+
 MATH_SYS='Please reason step by step, and put your final answer within \\boxed{}.'
 CODING_SYS='You are a helpful coding assistant. Write clean, correct, and well-structured code. Provide clear explanations when needed.'
 FUNCALL_SYS='You are a helpful assistant with access to functions. When the user'"'"'s request can be fulfilled by calling a function, respond with a JSON array of function calls like: [{"name": "function_name", "arguments": {"arg1": "value1"}}]. If no function is needed, respond normally.'
-
-# ─── Helper functions ───
 
 train_and_eval() {
     local STUDENT=$1
@@ -37,12 +39,11 @@ train_and_eval() {
     local RUN_NAME=$8
     local EXTRA_ARGS=$9
 
-    # Train
     if [ -d "$OUTDIR/step_${STEPS}" ]; then
         echo "=== $RUN_NAME training already done, skipping ==="
     else
-        echo "=== Training $RUN_NAME ==="
-        CUDA_VISIBLE_DEVICES=1 python on_policy_distill_positional.py \
+        echo "=== Training $RUN_NAME (HF generate, no vLLM) ==="
+        CUDA_VISIBLE_DEVICES=0 python on_policy_distill_positional.py \
             --student_model "$STUDENT" --teacher_model "$TEACHER" \
             --dataset "$DATASET" --num_problems "$NUM_PROBLEMS" \
             --bs 16 --n_samples 1 \
@@ -52,14 +53,13 @@ train_and_eval() {
             --system_prompt "$SYS_PROMPT" \
             --wandb_project dft-distill-scaling \
             --output_dir "$OUTDIR" \
-            --position_limit $POS \
+            --position_limit 0 \
             --wandb_run_name "$RUN_NAME" \
             $EXTRA_ARGS \
             2>&1 | tee "logs/${RUN_NAME}.log"
         echo "=== $RUN_NAME training done ==="
     fi
 
-    # Eval
     eval_checkpoints "$STUDENT" "$TASK" "$OUTDIR" "$RUN_NAME"
 }
 
@@ -76,7 +76,6 @@ eval_checkpoints() {
         [ ! -d "$LORA_PATH" ] && continue
         [ -f "$EVAL_DIR/summary.json" ] && echo "=== $RUN_NAME step $STEP eval exists, skipping ===" && continue
 
-        # Merge LoRA
         local MERGED_PATH="$OUTDIR/_eval_merged_step_${STEP}"
         echo "=== Merging $RUN_NAME step $STEP ==="
         CUDA_VISIBLE_DEVICES="" python -c "
@@ -105,71 +104,37 @@ eval_task() {
     local EVAL_DIR=$3
 
     if [ "$TASK" = "math" ]; then
-        CUDA_VISIBLE_DEVICES=1 python eval_math500.py \
+        CUDA_VISIBLE_DEVICES=0 python eval_math500.py \
             --model "$MODEL" --output_dir "$EVAL_DIR" \
             --n_samples 4 --temperature 0.7 --gpu_memory_utilization 0.50
     elif [ "$TASK" = "coding" ]; then
         mkdir -p "$EVAL_DIR"
         for DS in humaneval mbpp; do
-            CUDA_VISIBLE_DEVICES=1 python scripts/eval_humaneval.py \
+            CUDA_VISIBLE_DEVICES=0 python scripts/eval_humaneval.py \
                 --model "$MODEL" --dataset $DS \
                 --output_dir "$EVAL_DIR" \
                 --gpu_memory_utilization 0.50 --trust_remote_code
         done
         echo '{"status": "done"}' > "$EVAL_DIR/summary.json"
     elif [ "$TASK" = "funcall" ]; then
-        CUDA_VISIBLE_DEVICES=1 python eval_funcall.py \
+        CUDA_VISIBLE_DEVICES=0 python eval_funcall.py \
             --model "$MODEL" --output_dir "$EVAL_DIR" \
             --gpu_id 0 --gpu_memory_utilization 0.50 --categories "simple,multiple"
     fi
 }
 
-# Baseline eval (Qwen3-8B, Qwen3-1.7B) — run separately if needed; omitted here.
+echo "========== Config C: Qwen3-1.7B + Qwen3-4B (HF generate, no vLLM) =========="
 
-# ─── Config D: Qwen3-1.7B student + Qwen3-8B teacher ───
-echo "========== Config D: Qwen3-1.7B + Qwen3-8B =========="
-D_STUDENT="$QWEN3_17"
+train_and_eval "$C_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
+    "$MATH_SYS" "checkpoints/scale-q1.7b-t4b-math-fullseq" "scale-q1.7b-t4b-math-fullseq-hf" \
+    "$HF_MATH_EXTRA"
 
-train_and_eval "$D_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-q1.7b-t8b-math-pos100" "scale-q1.7b-t8b-math"
+train_and_eval "$C_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
+    "$CODING_SYS" "checkpoints/scale-q1.7b-t4b-coding-fullseq" "scale-q1.7b-t4b-coding-fullseq-hf" \
+    "$HF_CODE_EXTRA --problem_field instruction --mini_bs 4"
 
-train_and_eval "$D_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-q1.7b-t8b-coding-pos100" "scale-q1.7b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
+train_and_eval "$C_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
+    "$FUNCALL_SYS" "checkpoints/scale-q1.7b-t4b-funcall-fullseq" "scale-q1.7b-t4b-funcall-fullseq-hf" \
+    "$HF_FUNCALL_EXTRA --problem_field problem"
 
-train_and_eval "$D_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-q1.7b-t8b-funcall-pos100" "scale-q1.7b-t8b-funcall" \
-    "--problem_field problem"
-
-# ─── Config B: Math-1.5B student + Qwen3-8B teacher ───
-echo "========== Config B: Math-1.5B + Qwen3-8B =========="
-B_STUDENT="$MATH_STUDENT_15"
-
-train_and_eval "$B_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-m1.5b-t8b-math-pos100" "scale-m1.5b-t8b-math"
-
-train_and_eval "$B_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-m1.5b-t8b-coding-pos100" "scale-m1.5b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
-
-train_and_eval "$B_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-m1.5b-t8b-funcall-pos100" "scale-m1.5b-t8b-funcall" \
-    "--problem_field problem"
-
-# ─── Config E: Qwen3-4B student + Qwen3-8B teacher ───
-echo "========== Config E: Qwen3-4B + Qwen3-8B =========="
-E_STUDENT="$QWEN3_4"
-
-train_and_eval "$E_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-q4b-t8b-math-pos100" "scale-q4b-t8b-math" \
-    "--mini_bs 4"
-
-train_and_eval "$E_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-q4b-t8b-coding-pos100" "scale-q4b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
-
-train_and_eval "$E_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-q4b-t8b-funcall-pos100" "scale-q4b-t8b-funcall" \
-    "--problem_field problem --mini_bs 4"
-
-echo "=== GPU 1 ALL DONE ==="
+echo "=== Config C GPU 0 (HF) ALL DONE ==="

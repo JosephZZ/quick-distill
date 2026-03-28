@@ -678,6 +678,13 @@ def main():
     # New parameter: position limit
     parser.add_argument("--position_limit", type=int, default=50,
                        help="Only distill first N tokens (0=disabled, default=50)")
+    parser.add_argument(
+        "--token_select_mode",
+        type=str,
+        default="prefix",
+        choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher"],
+        help="Which response tokens to distill: prefix (first N), top_kl, top_entropy_student, top_entropy_teacher",
+    )
     parser.add_argument("--progressive_position", action="store_true",
                        help="Linearly increase position_limit from 1 to num_problems over training")
     parser.add_argument("--resume_from", type=str, default=None,
@@ -702,6 +709,8 @@ def main():
                        help="System prompt for generation (default: math reasoning prompt)")
 
     args = parser.parse_args()
+    if args.token_select_mode != "prefix" and args.position_limit <= 0:
+        raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
 
     # Compute n_problems per step from bs and n_samples
     if args.bs % args.n_samples != 0:
@@ -785,11 +794,15 @@ def main():
     warmup_steps = int(total_steps * args.warmup_ratio)
     print(f"Total steps: {total_steps}, Warmup: {warmup_steps}, Chunks: {len(chunks)}, "
           f"Problems: {len(problems)}")
-    # Auto-clamp max_new_tokens to position_limit when using positional loss
-    if args.position_limit > 0 and args.max_new_tokens > args.position_limit:
+    # Auto-clamp max_new_tokens only for prefix distillation.
+    # For top-K token selection modes we need full-trajectory rollout.
+    if args.token_select_mode == "prefix" and args.position_limit > 0 and args.max_new_tokens > args.position_limit:
         print(f"Auto-clamping max_new_tokens from {args.max_new_tokens} to {args.position_limit} (matches position_limit)")
         args.max_new_tokens = args.position_limit
-    print(f"Loss: {args.loss_type}, Position limit: {args.position_limit}, Max new tokens: {args.max_new_tokens}")
+    print(
+        f"Loss: {args.loss_type}, Token select: {args.token_select_mode}, "
+        f"Position limit/top-K: {args.position_limit}, Max new tokens: {args.max_new_tokens}"
+    )
 
     log_file = open(os.path.join(args.output_dir, "train_log.jsonl"), "w")
     accum_loss = 0.0
@@ -900,8 +913,10 @@ def main():
 
             # 3. Run vLLM subprocess
             traj_output = os.path.join(args.output_dir, "_vllm_trajs.json")
+            # Tokenizer must come from merged dir (local files); passing Hub id hits network and can
+            # mismatch vLLM/transformers tokenizer APIs.
             all_trajectories = generate_chunk_vllm(
-                merged_gen_path, args.student_model, chunk_problems,
+                merged_gen_path, merged_gen_path, chunk_problems,
                 args.n_samples, args.max_new_tokens, args.temperature,
                 traj_output, gpu_id=args.student_gpu, max_retries=2,
                 mem_threshold_mb=500, gpu_memory_utilization=args.vllm_gpu_util,
@@ -955,8 +970,10 @@ def main():
             trajs = all_trajectories[prob_idx_str]
             if len(trajs) == 0:
                 continue
+            # For non-prefix token selection, score full response and select positions during loss build.
+            query_pos_limit = current_pos_limit if args.token_select_mode == "prefix" else 0
             teacher_lps = query_teacher_hf_logits_batch(
-                teacher_model, trajs, nothink_ids, current_pos_limit, device=teacher_device,
+                teacher_model, trajs, nothink_ids, query_pos_limit, device=teacher_device,
                 micro_bs=args.teacher_micro_bs,
             )
             all_chunk_trajs.extend(trajs)
@@ -975,16 +992,24 @@ def main():
         pad_id = 0
         all_input_ids = []
         resp_starts = []
-        effective_lens = []
+        response_lens = []
+        distill_counts = []
         for traj in all_chunk_trajs:
             prompt_ids = traj["prompt_ids"]
             response_ids = traj["response_ids"]
             resp_len = len(response_ids)
-            eff_len = min(resp_len, current_pos_limit) if current_pos_limit > 0 else resp_len
-            full_ids = prompt_ids + nothink_ids + response_ids[:eff_len]
+            if args.token_select_mode == "prefix":
+                # Legacy positional distillation: only keep prefix tokens.
+                distill_len = min(resp_len, current_pos_limit) if current_pos_limit > 0 else resp_len
+                full_ids = prompt_ids + nothink_ids + response_ids[:distill_len]
+            else:
+                # Full trajectory rollout, select top-K positions later.
+                distill_len = min(resp_len, current_pos_limit)
+                full_ids = prompt_ids + nothink_ids + response_ids
             all_input_ids.append(full_ids)
             resp_starts.append(len(prompt_ids) + len(nothink_ids))
-            effective_lens.append(eff_len)
+            response_lens.append(resp_len)
+            distill_counts.append(distill_len)
 
         # Gradient accumulation: split bs trajectories into mini-batches of mini_bs
         step_loss_val = 0.0
@@ -997,7 +1022,8 @@ def main():
             mb_size = mb_end - mb_start
             mb_ids = all_input_ids[mb_start:mb_end]
             mb_resp_starts = resp_starts[mb_start:mb_end]
-            mb_eff_lens = effective_lens[mb_start:mb_end]
+            mb_resp_lens = response_lens[mb_start:mb_end]
+            mb_distill_counts = distill_counts[mb_start:mb_end]
             mb_teacher = all_chunk_teacher_lps[mb_start:mb_end]
 
             max_len = max(len(ids) for ids in mb_ids)
@@ -1017,12 +1043,38 @@ def main():
                     shift_logits_i = logits_mb[i, :-1, :]
                     shift_labels_i = input_ids[i, 1:]
                     start = mb_resp_starts[i] - 1
-                    eff_len = mb_eff_lens[i]
+                    resp_len = mb_resp_lens[i]
+                    k = mb_distill_counts[i]
 
-                    t_log_probs = mb_teacher[i]
-                    s_log_probs_resp = log_softmax(shift_logits_i[start:start+eff_len].float(), dim=-1)
-                    limited_labels = shift_labels_i[start:start+eff_len]
-                    step_tokens += eff_len
+                    t_log_probs_all = mb_teacher[i].to(student_device)
+                    s_log_probs_all = log_softmax(shift_logits_i[start:start+resp_len].float(), dim=-1)
+                    labels_all = shift_labels_i[start:start+resp_len]
+
+                    # Choose token positions to distill.
+                    if args.token_select_mode == "prefix":
+                        sel_idx = torch.arange(k, device=student_device, dtype=torch.long)
+                    elif args.token_select_mode == "top_kl":
+                        with torch.no_grad():
+                            kl_per_pos = (torch.exp(t_log_probs_all) * (t_log_probs_all - s_log_probs_all.detach())).sum(dim=-1)
+                            sel_idx = torch.topk(kl_per_pos, k=k, largest=True).indices
+                    elif args.token_select_mode == "top_entropy_student":
+                        with torch.no_grad():
+                            ps = torch.exp(s_log_probs_all.detach())
+                            ent_per_pos = -(ps * s_log_probs_all.detach()).sum(dim=-1)
+                            sel_idx = torch.topk(ent_per_pos, k=k, largest=True).indices
+                    elif args.token_select_mode == "top_entropy_teacher":
+                        with torch.no_grad():
+                            pt = torch.exp(t_log_probs_all)
+                            ent_per_pos = -(pt * t_log_probs_all).sum(dim=-1)
+                            sel_idx = torch.topk(ent_per_pos, k=k, largest=True).indices
+                    else:
+                        raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
+
+                    sel_idx, _ = torch.sort(sel_idx)
+                    s_log_probs_resp = s_log_probs_all.index_select(0, sel_idx)
+                    t_log_probs = t_log_probs_all.index_select(0, sel_idx)
+                    limited_labels = labels_all.index_select(0, sel_idx)
+                    step_tokens += k
 
                     # Cross-tokenizer: remap teacher logprobs to student vocab order
                     if vocab_mapping is not None:
@@ -1035,7 +1087,7 @@ def main():
                         s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
 
                     loss_traj = kl_div(
-                        t_log_probs.to(student_device),
+                        t_log_probs,
                         s_log_probs_resp,
                         log_target=True,
                         reduction="batchmean",
@@ -1044,7 +1096,7 @@ def main():
 
                     with torch.no_grad():
                         s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                        t_lps_sampled = t_log_probs.to(student_device).gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
+                        t_lps_sampled = t_log_probs.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
                         step_kl += (s_lps - t_lps_sampled).mean().item()
                         step_ce += (-s_lps).mean().item()
 

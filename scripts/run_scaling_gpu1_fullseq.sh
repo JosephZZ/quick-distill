@@ -1,8 +1,7 @@
 #!/bin/bash
-# Model size scaling experiments — GPU 1 only (student+teacher on cuda:0 of this process = physical GPU 1)
-# Teacher: Qwen3-8B
-# Configs: D (Qwen3-1.7B student) + B (Math-1.5B student) + E (Qwen3-4B student)
-# Tasks: Math, Coding, Funcall
+# Model size scaling — full-seq (mirrors run_scaling_gpu1.sh pos100 runs)
+# GPU 1 only (student+teacher same card). Use run_scaling_gpu0_fullseq.sh on GPU 0 in parallel.
+# Teacher: Qwen3-8B | Configs: B + D + E | Tasks: Math, Coding, Funcall
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -15,16 +14,18 @@ mkdir -p logs
 source "$SCRIPT_DIR/hf_models_env.sh"
 
 TEACHER="$QWEN3_8"
-POS=100
 LR=5e-5
 LORA_R=32
 LORA_ALPHA=64
 
+# Single-GPU fallback: keep full-seq (position_limit=0), reduce mini-batch only.
+FULLSEQ_MATH_EXTRA="--max_new_tokens 3584 --teacher_micro_bs 1 --mini_bs 1"
+FULLSEQ_CODE_EXTRA="--max_new_tokens 3584 --teacher_micro_bs 1 --mini_bs 1"
+FULLSEQ_FUNCALL_EXTRA="--max_new_tokens 3584 --teacher_micro_bs 1 --mini_bs 1"
+
 MATH_SYS='Please reason step by step, and put your final answer within \\boxed{}.'
 CODING_SYS='You are a helpful coding assistant. Write clean, correct, and well-structured code. Provide clear explanations when needed.'
 FUNCALL_SYS='You are a helpful assistant with access to functions. When the user'"'"'s request can be fulfilled by calling a function, respond with a JSON array of function calls like: [{"name": "function_name", "arguments": {"arg1": "value1"}}]. If no function is needed, respond normally.'
-
-# ─── Helper functions ───
 
 train_and_eval() {
     local STUDENT=$1
@@ -37,7 +38,6 @@ train_and_eval() {
     local RUN_NAME=$8
     local EXTRA_ARGS=$9
 
-    # Train
     if [ -d "$OUTDIR/step_${STEPS}" ]; then
         echo "=== $RUN_NAME training already done, skipping ==="
     else
@@ -52,14 +52,13 @@ train_and_eval() {
             --system_prompt "$SYS_PROMPT" \
             --wandb_project dft-distill-scaling \
             --output_dir "$OUTDIR" \
-            --position_limit $POS \
+            --position_limit 0 \
             --wandb_run_name "$RUN_NAME" \
             $EXTRA_ARGS \
             2>&1 | tee "logs/${RUN_NAME}.log"
         echo "=== $RUN_NAME training done ==="
     fi
 
-    # Eval
     eval_checkpoints "$STUDENT" "$TASK" "$OUTDIR" "$RUN_NAME"
 }
 
@@ -76,7 +75,6 @@ eval_checkpoints() {
         [ ! -d "$LORA_PATH" ] && continue
         [ -f "$EVAL_DIR/summary.json" ] && echo "=== $RUN_NAME step $STEP eval exists, skipping ===" && continue
 
-        # Merge LoRA
         local MERGED_PATH="$OUTDIR/_eval_merged_step_${STEP}"
         echo "=== Merging $RUN_NAME step $STEP ==="
         CUDA_VISIBLE_DEVICES="" python -c "
@@ -124,52 +122,49 @@ eval_task() {
     fi
 }
 
-# Baseline eval (Qwen3-8B, Qwen3-1.7B) — run separately if needed; omitted here.
-
-# ─── Config D: Qwen3-1.7B student + Qwen3-8B teacher ───
-echo "========== Config D: Qwen3-1.7B + Qwen3-8B =========="
+echo "========== Config D: Qwen3-1.7B + Qwen3-8B (fullseq) =========="
 D_STUDENT="$QWEN3_17"
 
 train_and_eval "$D_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-q1.7b-t8b-math-pos100" "scale-q1.7b-t8b-math"
+    "$MATH_SYS" "checkpoints/scale-q1.7b-t8b-math-fullseq" "scale-q1.7b-t8b-math-fullseq" \
+    "$FULLSEQ_MATH_EXTRA"
 
 train_and_eval "$D_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-q1.7b-t8b-coding-pos100" "scale-q1.7b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
+    "$CODING_SYS" "checkpoints/scale-q1.7b-t8b-coding-fullseq" "scale-q1.7b-t8b-coding-fullseq" \
+    "$FULLSEQ_CODE_EXTRA --problem_field instruction --mini_bs 1"
 
 train_and_eval "$D_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-q1.7b-t8b-funcall-pos100" "scale-q1.7b-t8b-funcall" \
-    "--problem_field problem"
+    "$FUNCALL_SYS" "checkpoints/scale-q1.7b-t8b-funcall-fullseq" "scale-q1.7b-t8b-funcall-fullseq" \
+    "$FULLSEQ_FUNCALL_EXTRA --problem_field problem"
 
-# ─── Config B: Math-1.5B student + Qwen3-8B teacher ───
-echo "========== Config B: Math-1.5B + Qwen3-8B =========="
+echo "========== Config B: Math-1.5B + Qwen3-8B (fullseq) =========="
 B_STUDENT="$MATH_STUDENT_15"
 
 train_and_eval "$B_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-m1.5b-t8b-math-pos100" "scale-m1.5b-t8b-math"
+    "$MATH_SYS" "checkpoints/scale-m1.5b-t8b-math-fullseq" "scale-m1.5b-t8b-math-fullseq" \
+    "$FULLSEQ_MATH_EXTRA"
 
 train_and_eval "$B_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-m1.5b-t8b-coding-pos100" "scale-m1.5b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
+    "$CODING_SYS" "checkpoints/scale-m1.5b-t8b-coding-fullseq" "scale-m1.5b-t8b-coding-fullseq" \
+    "$FULLSEQ_CODE_EXTRA --problem_field instruction --mini_bs 1"
 
 train_and_eval "$B_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-m1.5b-t8b-funcall-pos100" "scale-m1.5b-t8b-funcall" \
-    "--problem_field problem"
+    "$FUNCALL_SYS" "checkpoints/scale-m1.5b-t8b-funcall-fullseq" "scale-m1.5b-t8b-funcall-fullseq" \
+    "$FULLSEQ_FUNCALL_EXTRA --problem_field problem"
 
-# ─── Config E: Qwen3-4B student + Qwen3-8B teacher ───
-echo "========== Config E: Qwen3-4B + Qwen3-8B =========="
+echo "========== Config E: Qwen3-4B + Qwen3-8B (fullseq) =========="
 E_STUDENT="$QWEN3_4"
 
 train_and_eval "$E_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-q4b-t8b-math-pos100" "scale-q4b-t8b-math" \
-    "--mini_bs 4"
+    "$MATH_SYS" "checkpoints/scale-q4b-t8b-math-fullseq" "scale-q4b-t8b-math-fullseq" \
+    "$FULLSEQ_MATH_EXTRA --mini_bs 1"
 
 train_and_eval "$E_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-q4b-t8b-coding-pos100" "scale-q4b-t8b-coding" \
-    "--problem_field instruction --mini_bs 4"
+    "$CODING_SYS" "checkpoints/scale-q4b-t8b-coding-fullseq" "scale-q4b-t8b-coding-fullseq" \
+    "$FULLSEQ_CODE_EXTRA --problem_field instruction --mini_bs 1"
 
 train_and_eval "$E_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-q4b-t8b-funcall-pos100" "scale-q4b-t8b-funcall" \
-    "--problem_field problem --mini_bs 4"
+    "$FUNCALL_SYS" "checkpoints/scale-q4b-t8b-funcall-fullseq" "scale-q4b-t8b-funcall-fullseq" \
+    "$FULLSEQ_FUNCALL_EXTRA --problem_field problem --mini_bs 1"
 
-echo "=== GPU 1 ALL DONE ==="
+echo "=== GPU 1 FULLSEQ ALL DONE ==="

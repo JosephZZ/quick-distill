@@ -235,3 +235,109 @@ All experiments use LoRA (r=32), pos-100, n_samples=1, chunk_size=16 (3200 probl
 2. **Optimal training step varies.** Strong students peak early (step 50-100) while weak students need more training (step 150-200), especially for funcall where format learning takes time.
 3. **Larger teacher generally helps more**, but the effect is most pronounced when the student is weak. For strong students, teacher size matters less.
 4. **Cross-architecture transfer works surprisingly well.** The Math-1.5B model, despite being a different architecture/pretraining, successfully absorbs knowledge from Qwen3 teachers.
+
+---
+
+## 7. Full-Sequence Distillation (Scaling, LoRA)
+
+Same student–teacher matrix as Sections 2–4 (Configs A–E), but **`position_limit=0`** (loss on full student response), generation via **`--use_vllm`**, **`teacher_micro_bs=4`**, otherwise matched to pos-100 scaling: LoRA r=32/α=64, lr=5e-5, n_samples=1, bs=16, 3200 problems, 200 steps, save every 50. **`max_new_tokens`**: 2048 (math), 512 (coding / funcall). Checkpoints: `checkpoints/scale-*-{math,coding,funcall}-fullseq/`. Scripts: `scripts/run_scaling_gpu0_fullseq.sh`, `scripts/run_scaling_gpu1_fullseq.sh`.
+
+**Note:** MATH-500 numbers below use the same eval script as pos-100 (`eval_math500.py`, last-`\boxed{}` extraction). Full-seq models may repeat `\boxed{}`; if metrics look inconsistent with samples, consider first-boxed or manual spot checks (see project `CLAUDE.md`).
+
+### 7.1 Math (MATH-500, n=4, temp=0.7)
+
+#### avg@4
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+#### pass@4
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+*Fill from each run’s `checkpoints/scale-*-math-fullseq/eval_step_{50,100,150,200}/summary.json` (and derived avg@4 / pass@4 if computed outside `summary.json`).*
+
+### 7.2 Function Calling (name_acc / full_acc)
+
+#### name_acc
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+#### full_acc
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+*Fill from `checkpoints/scale-*-funcall-fullseq/eval_step_*/summary.json`.*
+
+### 7.3 Coding (HumanEval / MBPP, pass@1)
+
+#### HumanEval (pass@1)
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+#### HumanEval+ (pass@1)
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+#### MBPP (pass@1)
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+#### MBPP+ (pass@1)
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
+| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
+| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
+| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+*Coding metrics require `evalplus` on the jsonl files under each `eval_step_*` (same workflow as pos-100 scaling); the training script only drops a stub `summary.json` for coding.*
+
+### 7.4 Full-seq vs pos-100 (best step, to be filled)
+
+| Config | Task | Best pos-100 | Best full-seq | Notes |
+|--------|------|--------------|---------------|-------|
+| A–E | Math / Funcall / Coding | see §§2–4 | see §7.1–7.3 | Compare after tables above are filled |

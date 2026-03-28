@@ -1,8 +1,6 @@
 #!/bin/bash
-# Model size scaling experiments — GPU 0 only (student+teacher on cuda:0; run gpu1 script on the other GPU)
-# Teacher: Qwen3-4B
-# Configs: A (Math-1.5B student) + C (Qwen3-1.7B student)
-# Tasks: Math, Coding, Funcall
+# Gemma fullseq LoRA distillation: math + coding + agentic(funcall)
+# Same settings as previous fullseq experiments, only model pair changed.
 set -eo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -10,35 +8,33 @@ BASE_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 cd "$BASE_DIR"
 mkdir -p logs
 
-# Stock ~/.bashrc skips non-interactive shells; PS1 nonempty forces full load for HF_MODELS etc.
 [ -f "${HOME}/.bashrc" ] && PS1=nonempty source "${HOME}/.bashrc" 2>/dev/null || true
-# shellcheck disable=SC1091
-source "$SCRIPT_DIR/hf_models_env.sh"
 
-TEACHER="$QWEN3_4"
-POS=100
+TEACHER="google/gemma-3-4b-it"
+STUDENT="google/gemma-2-2b-it"
+
 LR=5e-5
 LORA_R=32
 LORA_ALPHA=64
 
+FULLSEQ_MATH_EXTRA="--use_vllm --max_new_tokens 2048 --teacher_micro_bs 4"
+FULLSEQ_CODE_EXTRA="--use_vllm --max_new_tokens 512 --teacher_micro_bs 4"
+FULLSEQ_AGENTIC_EXTRA="--use_vllm --max_new_tokens 512 --teacher_micro_bs 4"
+
 MATH_SYS='Please reason step by step, and put your final answer within \\boxed{}.'
 CODING_SYS='You are a helpful coding assistant. Write clean, correct, and well-structured code. Provide clear explanations when needed.'
-FUNCALL_SYS='You are a helpful assistant with access to functions. When the user'"'"'s request can be fulfilled by calling a function, respond with a JSON array of function calls like: [{"name": "function_name", "arguments": {"arg1": "value1"}}]. If no function is needed, respond normally.'
-
-# ─── Helper functions ───
+AGENTIC_SYS='You are a helpful assistant with access to functions. When the user'"'"'s request can be fulfilled by calling a function, respond with a JSON array of function calls like: [{"name": "function_name", "arguments": {"arg1": "value1"}}]. If no function is needed, respond normally.'
 
 train_and_eval() {
-    local STUDENT=$1
-    local TASK=$2
-    local DATASET=$3
-    local NUM_PROBLEMS=$4
-    local STEPS=$5
-    local SYS_PROMPT=$6
-    local OUTDIR=$7
-    local RUN_NAME=$8
-    local EXTRA_ARGS=$9
+    local TASK=$1
+    local DATASET=$2
+    local NUM_PROBLEMS=$3
+    local STEPS=$4
+    local SYS_PROMPT=$5
+    local OUTDIR=$6
+    local RUN_NAME=$7
+    local EXTRA_ARGS=$8
 
-    # Train
     if [ -d "$OUTDIR/step_${STEPS}" ]; then
         echo "=== $RUN_NAME training already done, skipping ==="
     else
@@ -47,28 +43,26 @@ train_and_eval() {
             --student_model "$STUDENT" --teacher_model "$TEACHER" \
             --dataset "$DATASET" --num_problems "$NUM_PROBLEMS" \
             --bs 16 --n_samples 1 \
-            --temperature 0.7 --lr $LR --lora_r $LORA_R --lora_alpha $LORA_ALPHA \
+            --temperature 0.7 --lr "$LR" --lora_r "$LORA_R" --lora_alpha "$LORA_ALPHA" \
             --save_steps 50 --log_steps 10 --eval_steps 0 \
             --student_gpu 0 --teacher_gpu 0 \
             --system_prompt "$SYS_PROMPT" \
             --wandb_project dft-distill-scaling \
             --output_dir "$OUTDIR" \
-            --position_limit $POS \
+            --position_limit 0 \
             --wandb_run_name "$RUN_NAME" \
             $EXTRA_ARGS \
             2>&1 | tee "logs/${RUN_NAME}.log"
         echo "=== $RUN_NAME training done ==="
     fi
 
-    # Eval
-    eval_checkpoints "$STUDENT" "$TASK" "$OUTDIR" "$RUN_NAME"
+    eval_checkpoints "$TASK" "$OUTDIR" "$RUN_NAME"
 }
 
 eval_checkpoints() {
-    local STUDENT=$1
-    local TASK=$2
-    local OUTDIR=$3
-    local RUN_NAME=$4
+    local TASK=$1
+    local OUTDIR=$2
+    local RUN_NAME=$3
 
     for STEP in 50 100 150 200; do
         local LORA_PATH="$OUTDIR/step_${STEP}"
@@ -77,7 +71,6 @@ eval_checkpoints() {
         [ ! -d "$LORA_PATH" ] && continue
         [ -f "$EVAL_DIR/summary.json" ] && echo "=== $RUN_NAME step $STEP eval exists, skipping ===" && continue
 
-        # Merge LoRA
         local MERGED_PATH="$OUTDIR/_eval_merged_step_${STEP}"
         echo "=== Merging $RUN_NAME step $STEP ==="
         CUDA_VISIBLE_DEVICES="" python -c "
@@ -113,48 +106,31 @@ eval_task() {
         mkdir -p "$EVAL_DIR"
         for DS in humaneval mbpp; do
             CUDA_VISIBLE_DEVICES=0 python scripts/eval_humaneval.py \
-                --model "$MODEL" --dataset $DS \
+                --model "$MODEL" --dataset "$DS" \
                 --output_dir "$EVAL_DIR" \
                 --gpu_memory_utilization 0.50 --trust_remote_code
         done
         echo '{"status": "done"}' > "$EVAL_DIR/summary.json"
-    elif [ "$TASK" = "funcall" ]; then
+    elif [ "$TASK" = "agentic" ]; then
         CUDA_VISIBLE_DEVICES=0 python eval_funcall.py \
             --model "$MODEL" --output_dir "$EVAL_DIR" \
             --gpu_id 0 --gpu_memory_utilization 0.50 --categories "simple,multiple"
     fi
 }
 
-# Baseline eval (Qwen3-4B on math/coding/funcall) — run separately if needed; omitted here.
+echo "========== Gemma fullseq: 2-2b-it student + 3-4b-it teacher =========="
 
-# ─── Config C: Qwen3-1.7B student + Qwen3-4B teacher ───
-echo "========== Config C: Qwen3-1.7B + Qwen3-4B =========="
-C_STUDENT="$QWEN3_17"
+train_and_eval "math" "AI-MO/NuminaMath-CoT" 3200 200 \
+    "$MATH_SYS" "checkpoints/scale-gemma2-2b-tgemma3-4b-math-fullseq" "scale-gemma2-2b-tgemma3-4b-math-fullseq" \
+    "$FULLSEQ_MATH_EXTRA"
 
-train_and_eval "$C_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-q1.7b-t4b-math-pos100" "scale-q1.7b-t4b-math"
+train_and_eval "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
+    "$CODING_SYS" "checkpoints/scale-gemma2-2b-tgemma3-4b-coding-fullseq" "scale-gemma2-2b-tgemma3-4b-coding-fullseq" \
+    "$FULLSEQ_CODE_EXTRA --problem_field instruction --mini_bs 4"
 
-train_and_eval "$C_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-q1.7b-t4b-coding-pos100" "scale-q1.7b-t4b-coding" \
-    "--problem_field instruction --mini_bs 4"
+# agentic task uses the existing function-calling dataset/eval pipeline used by previous fullseq runs
+train_and_eval "agentic" "data/funcall/train.jsonl" 3200 200 \
+    "$AGENTIC_SYS" "checkpoints/scale-gemma2-2b-tgemma3-4b-agentic-fullseq" "scale-gemma2-2b-tgemma3-4b-agentic-fullseq" \
+    "$FULLSEQ_AGENTIC_EXTRA --problem_field problem"
 
-train_and_eval "$C_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-q1.7b-t4b-funcall-pos100" "scale-q1.7b-t4b-funcall" \
-    "--problem_field problem"
-
-# ─── Config A: Math-1.5B student + Qwen3-4B teacher ───
-echo "========== Config A: Math-1.5B + Qwen3-4B =========="
-A_STUDENT="$MATH_STUDENT_15"
-
-train_and_eval "$A_STUDENT" "math" "AI-MO/NuminaMath-CoT" 3200 200 \
-    "$MATH_SYS" "checkpoints/scale-m1.5b-t4b-math-pos100" "scale-m1.5b-t4b-math"
-
-train_and_eval "$A_STUDENT" "coding" "coseal/CodeUltraFeedback_binarized" 3200 200 \
-    "$CODING_SYS" "checkpoints/scale-m1.5b-t4b-coding-pos100" "scale-m1.5b-t4b-coding" \
-    "--problem_field instruction --mini_bs 4"
-
-train_and_eval "$A_STUDENT" "funcall" "data/funcall/train.jsonl" 3200 200 \
-    "$FUNCALL_SYS" "checkpoints/scale-m1.5b-t4b-funcall-pos100" "scale-m1.5b-t4b-funcall" \
-    "--problem_field problem"
-
-echo "=== GPU 0 ALL DONE ==="
+echo "=== Gemma fullseq all done ==="
