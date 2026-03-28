@@ -561,8 +561,10 @@ def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new
         json.dump(problems, f)
 
     env = os.environ.copy()
-    # Always set CUDA_VISIBLE_DEVICES for the subprocess to the correct physical GPU
-    env["CUDA_VISIBLE_DEVICES"] = str(_get_physical_gpu_id(gpu_id))
+    # Always set CUDA_VISIBLE_DEVICES for vLLM subprocess to the correct physical GPU
+    # Map through parent's CUDA_VISIBLE_DEVICES if set (e.g., "0,1" with gpu_id=1 → "1")
+    physical_gpu = _get_physical_gpu_id(gpu_id)
+    env["CUDA_VISIBLE_DEVICES"] = str(physical_gpu)
 
     cmd = [
         sys.executable, "vllm_generate.py",
@@ -1279,7 +1281,7 @@ def main():
                         _msi_dev = mapped_student_ids.to(shift_logits_i.device)
                         # Bounds check: clamp indices to valid range
                         _msi_dev = _msi_dev.clamp(max=shift_logits_i.shape[-1] - 1)
-                        s_logits_shared = shift_logits_i[start:start+eff_len][:, _msi_dev]
+                        s_logits_shared = shift_logits_i[start:start+k][:, _msi_dev]
                         s_log_probs_shared = log_softmax(s_logits_shared.float(), dim=-1)
 
                         # Reverse KL over shared vocab: KL(student_shared || teacher_shared)
