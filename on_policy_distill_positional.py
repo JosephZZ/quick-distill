@@ -410,7 +410,7 @@ _sglang_process = None
 _sglang_port = None
 
 
-def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50, port=30000):
+def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50, port=30000, gpu_id=None):
     """Launch a persistent SGLang server. Returns (process, port)."""
     global _sglang_process, _sglang_port
     if _sglang_process is not None:
@@ -418,6 +418,8 @@ def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50,
 
     import requests as _req
     env = os.environ.copy()
+    if gpu_id is not None:
+        env["CUDA_VISIBLE_DEVICES"] = str(_get_physical_gpu_id(gpu_id))
 
     cmd = [
         sys.executable, "-m", "sglang.launch_server",
@@ -427,9 +429,12 @@ def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50,
         "--mem-fraction-static", str(gpu_memory_utilization),
         "--trust-remote-code",
         "--dtype", "bfloat16",
+        "--disable-cuda-graph",
+        "--enable-memory-saver",
     ]
-    print(f"  Starting SGLang server on port {port} (gpu_util={gpu_memory_utilization})...")
-    proc = subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    print(f"  Starting SGLang server on port {port} (gpu_util={gpu_memory_utilization}, gpu={gpu_id})...")
+    sglang_log = open(os.path.join(os.environ.get("HOME", "."), "sglang_server.log"), "w")
+    proc = subprocess.Popen(cmd, env=env, stdout=sglang_log, stderr=subprocess.STDOUT)
 
     # Wait for server to be ready (up to 120s)
     for i in range(120):
@@ -448,6 +453,30 @@ def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50,
 
     proc.kill()
     raise RuntimeError("SGLang server failed to start within 120s")
+
+
+def sglang_release_memory(port=None):
+    """Tell SGLang to release GPU memory so training can use it."""
+    import requests as _req
+    port = port or _sglang_port
+    r = _req.post(f"http://localhost:{port}/release_memory_occupation", json={}, timeout=30)
+    if r.status_code != 200:
+        print(f"  WARNING: SGLang release_memory failed: {r.text}")
+        return False
+    print("  SGLang: released GPU memory")
+    return True
+
+
+def sglang_resume_memory(port=None):
+    """Tell SGLang to resume GPU memory occupation for inference."""
+    import requests as _req
+    port = port or _sglang_port
+    r = _req.post(f"http://localhost:{port}/resume_memory_occupation", json={}, timeout=30)
+    if r.status_code != 200:
+        print(f"  WARNING: SGLang resume_memory failed: {r.text}")
+        return False
+    print("  SGLang: resumed GPU memory")
+    return True
 
 
 def update_sglang_weights(model_path, port=None):
@@ -505,7 +534,7 @@ def generate_chunk_sglang(problems, n_samples, max_new_tokens, temperature,
                 "response_ids": response_ids,
                 "text": text,
             })
-        all_trajectories[problem] = trajs
+        all_trajectories[str(i)] = trajs
 
     return all_trajectories
 
@@ -532,10 +561,8 @@ def generate_chunk_vllm(model_path, tokenizer_name, problems, n_samples, max_new
         json.dump(problems, f)
 
     env = os.environ.copy()
-    # Always set CUDA_VISIBLE_DEVICES for vLLM subprocess to the correct physical GPU
-    # Map through parent's CUDA_VISIBLE_DEVICES if set (e.g., "0,1" with gpu_id=1 → "1")
-    physical_gpu = _get_physical_gpu_id(gpu_id)
-    env["CUDA_VISIBLE_DEVICES"] = str(physical_gpu)
+    # Always set CUDA_VISIBLE_DEVICES for the subprocess to the correct physical GPU
+    env["CUDA_VISIBLE_DEVICES"] = str(_get_physical_gpu_id(gpu_id))
 
     cmd = [
         sys.executable, "vllm_generate.py",
@@ -796,6 +823,9 @@ def main():
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--student_gpu", type=int, default=0)
     parser.add_argument("--teacher_gpu", type=int, default=1)
+    parser.add_argument("--vllm_gpu", type=int, default=None,
+                       help="GPU for vLLM generation (default: same as student_gpu). "
+                            "Set to a separate GPU to avoid model offloading.")
     
     # New parameter: position limit
     parser.add_argument("--position_limit", type=int, default=50,
@@ -831,6 +861,8 @@ def main():
                        help="System prompt for generation (default: math reasoning prompt)")
 
     args = parser.parse_args()
+    if args.vllm_gpu is None:
+        args.vllm_gpu = args.student_gpu
     if args.token_select_mode != "prefix" and args.position_limit <= 0:
         raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
 
@@ -986,10 +1018,12 @@ def main():
         gen_start = time.time()
 
         if args.use_sglang:
-            # SGLang path: persistent server, no offloading needed
-            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (SGLang)...")
+            # SGLang colocate path: SGLang and student share the same GPU
+            # via enable_memory_saver (release/resume GPU memory)
+            colocate = (args.vllm_gpu == args.student_gpu)
+            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (SGLang, {'colocate' if colocate else 'separate GPU'})...")
 
-            # 1. Save merged model and update server weights
+            # 1. Save merged model for SGLang weight update
             merged_gen_path = os.path.join(args.output_dir, "_sglang_merged")
             if args.full_finetune:
                 student.save_pretrained(merged_gen_path)
@@ -997,27 +1031,47 @@ def main():
             else:
                 save_merged_model(student, tokenizer, merged_gen_path)
 
-            # 2. Start server on first call, or update weights
+            # 2. If colocate, offload student to CPU to free GPU for SGLang
+            if colocate:
+                student.to("cpu")
+                gc.collect()
+                torch.cuda.empty_cache()
+
+            # 3. Start server on first call, or resume + update weights
             if _sglang_process is None:
                 start_sglang_server(merged_gen_path, args.student_model,
                                     gpu_memory_utilization=args.vllm_gpu_util,
-                                    port=30000 + args.student_gpu)
+                                    port=30000 + args.vllm_gpu,
+                                    gpu_id=args.vllm_gpu)
             else:
+                if colocate:
+                    sglang_resume_memory()
                 update_sglang_weights(merged_gen_path)
 
-            # 3. Generate (no offload needed — server is a separate process)
+            # 4. Generate
             all_trajectories = generate_chunk_sglang(
                 chunk_problems, args.n_samples, args.max_new_tokens,
                 args.temperature, tokenizer, system_prompt=args.system_prompt,
             )
 
-            # 4. Cleanup merged checkpoint
+            # 5. If colocate, release SGLang memory and move student back to GPU
+            if colocate:
+                sglang_release_memory()
+                gc.collect()
+                torch.cuda.empty_cache()
+                student.to(student_device)
+
+            # 6. Cleanup merged checkpoint
             if os.path.exists(merged_gen_path):
                 shutil.rmtree(merged_gen_path)
 
         elif args.use_vllm:
-            # vLLM path: offload models to CPU, run vLLM subprocess, reload
-            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (vLLM)...")
+            # vLLM path: only offload models that share a GPU with vLLM
+            offload_student = (args.vllm_gpu == args.student_gpu)
+            offload_teacher = (args.vllm_gpu == args.teacher_gpu)
+            offload_desc = "no offload" if not (offload_student or offload_teacher) else \
+                           f"offload {'student+teacher' if offload_student and offload_teacher else 'student' if offload_student else 'teacher'}"
+            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (vLLM, {offload_desc})...")
 
             # 1. Save student model for vLLM (merge LoRA if needed)
             merged_gen_path = os.path.join(args.output_dir, "_vllm_merged")
@@ -1027,30 +1081,34 @@ def main():
             else:
                 save_merged_model(student, tokenizer, merged_gen_path)
 
-            # 2. Offload both models to CPU to free GPU for vLLM
-            student.to("cpu")
-            teacher_model.to("cpu")
-            gc.collect()
-            torch.cuda.empty_cache()
-            torch.cuda.ipc_collect()  # free IPC memory
+            # 2. Offload only models that share GPU with vLLM
+            if offload_student:
+                student.to("cpu")
+            if offload_teacher:
+                teacher_model.to("cpu")
+            if offload_student or offload_teacher:
+                gc.collect()
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
 
-            # 3. Run vLLM subprocess
+            # 3. Run vLLM subprocess on vllm_gpu
             traj_output = os.path.join(args.output_dir, "_vllm_trajs.json")
-            # Tokenizer must come from merged dir (local files); passing Hub id hits network and can
-            # mismatch vLLM/transformers tokenizer APIs.
             all_trajectories = generate_chunk_vllm(
                 merged_gen_path, merged_gen_path, chunk_problems,
                 args.n_samples, args.max_new_tokens, args.temperature,
-                traj_output, gpu_id=args.student_gpu, max_retries=2,
+                traj_output, gpu_id=args.vllm_gpu, max_retries=2,
                 mem_threshold_mb=500, gpu_memory_utilization=args.vllm_gpu_util,
                 system_prompt=args.system_prompt,
             )
 
-            # 4. Move models back to GPU (clear cache first — vLLM may leave residual memory)
-            gc.collect()
-            torch.cuda.empty_cache()
-            student.to(student_device)
-            teacher_model.to(teacher_device)
+            # 4. Move models back if they were offloaded
+            if offload_student or offload_teacher:
+                gc.collect()
+                torch.cuda.empty_cache()
+            if offload_student:
+                student.to(student_device)
+            if offload_teacher:
+                teacher_model.to(teacher_device)
 
             # 5. Cleanup
             if os.path.exists(merged_gen_path):
