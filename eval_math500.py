@@ -127,6 +127,15 @@ def main():
 
     # Load model
     print(f"Loading model: {args.model}")
+    # Pre-load tokenizer and ensure fast tokenizer with vLLM-compatible attributes
+    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True, use_fast=True)
+    if not hasattr(tokenizer, 'all_special_tokens_extended'):
+        tokenizer.all_special_tokens_extended = tokenizer.all_special_tokens
+        # Re-save so vLLM picks up the fast tokenizer files
+        try:
+            tokenizer.save_pretrained(args.model)
+        except Exception:
+            pass
     llm = LLM(
         model=args.model,
         tokenizer=args.model,
@@ -137,7 +146,6 @@ def main():
         trust_remote_code=True,
         gpu_memory_utilization=args.gpu_memory_utilization,
     )
-    tokenizer = AutoTokenizer.from_pretrained(args.model, trust_remote_code=True)
 
     sampling_params = SamplingParams(
         temperature=args.temperature,

@@ -15,6 +15,22 @@ import sys
 import subprocess
 from pathlib import Path
 
+# Monkey-patch Qwen2Tokenizer for vLLM compatibility (vLLM 0.11+ requires all_special_tokens_extended)
+try:
+    from transformers.models.qwen2.tokenization_qwen2 import Qwen2Tokenizer as _Q2Tok
+    if not hasattr(_Q2Tok, "all_special_tokens_extended"):
+        _Q2Tok.all_special_tokens_extended = property(
+            lambda self: list(getattr(self, "all_special_tokens", []) or []))
+except Exception:
+    pass
+try:
+    from transformers.models.qwen2.tokenization_qwen2_fast import Qwen2TokenizerFast as _Q2TokF
+    if not hasattr(_Q2TokF, "all_special_tokens_extended"):
+        _Q2TokF.all_special_tokens_extended = property(
+            lambda self: list(getattr(self, "all_special_tokens", []) or []))
+except Exception:
+    pass
+
 
 SYSTEM_PROMPT = (
     "You are a helpful assistant with access to functions. "
@@ -185,7 +201,10 @@ def generate_responses(model_path, problems, output_dir, max_new_tokens=512,
 
     from vllm import LLM, SamplingParams
 
-    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True)
+    tokenizer = AutoTokenizer.from_pretrained(model_path, trust_remote_code=True, use_fast=True)
+    # Patch for vLLM compatibility: ensure all_special_tokens_extended exists
+    if not hasattr(tokenizer, 'all_special_tokens_extended'):
+        tokenizer.all_special_tokens_extended = tokenizer.all_special_tokens
 
     # Build prompts
     # Check if model supports system role
@@ -215,6 +234,11 @@ def generate_responses(model_path, problems, output_dir, max_new_tokens=512,
         prompts.append(prompt)
 
     print(f"Loading model {model_path} with vLLM...")
+    # Save patched tokenizer to model_path to ensure vLLM picks up fast tokenizer
+    try:
+        tokenizer.save_pretrained(model_path)
+    except Exception:
+        pass  # May fail on read-only paths; vLLM will still try to load from model_path
     llm = LLM(
         model=model_path,
         dtype="bfloat16",
