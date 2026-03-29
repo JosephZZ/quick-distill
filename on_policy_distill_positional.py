@@ -418,6 +418,10 @@ def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50,
 
     import requests as _req
     env = os.environ.copy()
+    env["SGLANG_ALLOW_OVERWRITE_LONGER_CONTEXT_LEN"] = "1"
+    # Ensure ninja and conda bin on PATH for JIT compilation
+    conda_bin = os.path.dirname(sys.executable)
+    env["PATH"] = f"/usr/local/cuda-12.6/bin:{conda_bin}:/home/ziheng/.local/bin:" + env.get("PATH", "")
     if gpu_id is not None:
         env["CUDA_VISIBLE_DEVICES"] = str(_get_physical_gpu_id(gpu_id))
 
@@ -430,7 +434,7 @@ def start_sglang_server(model_path, tokenizer_name, gpu_memory_utilization=0.50,
         "--trust-remote-code",
         "--dtype", "bfloat16",
         "--disable-cuda-graph",
-        "--enable-memory-saver",
+        "--context-length", "8192",
     ]
     print(f"  Starting SGLang server on port {port} (gpu_util={gpu_memory_utilization}, gpu={gpu_id})...")
     sglang_log = open(os.path.join(os.environ.get("HOME", "."), "sglang_server.log"), "w")
@@ -851,6 +855,8 @@ def main():
                        help="Use vLLM subprocess for generation (faster but requires GPU offload)")
     parser.add_argument("--use_sglang", action="store_true",
                        help="Use persistent SGLang server for generation (fastest, no offload needed)")
+    parser.add_argument("--sglang_gpu", type=int, default=-1,
+                       help="GPU for SGLang server (-1 = same as student_gpu)")
     parser.add_argument("--vllm_gpu_util", type=float, default=0.90,
                        help="GPU memory utilization for vLLM/SGLang (default 0.90)")
     parser.add_argument("--full_finetune", action="store_true",
@@ -1050,6 +1056,7 @@ def main():
                 torch.cuda.empty_cache()
 
             # 3. Start/manage SGLang server
+            _sgl_gpu = args.sglang_gpu if args.sglang_gpu >= 0 else args.student_gpu
             if single_gpu:
                 # Single-GPU: kill old server, start fresh each step to fully free GPU
                 stop_sglang_server()
@@ -1057,13 +1064,13 @@ def main():
                 torch.cuda.empty_cache()
                 start_sglang_server(merged_gen_path, args.student_model,
                                     gpu_memory_utilization=args.vllm_gpu_util,
-                                    port=30000 + args.vllm_gpu,
-                                    gpu_id=args.vllm_gpu)
+                                    port=30000 + _sgl_gpu,
+                                    gpu_id=_sgl_gpu)
             elif _sglang_process is None:
                 start_sglang_server(merged_gen_path, args.student_model,
                                     gpu_memory_utilization=args.vllm_gpu_util,
-                                    port=30000 + args.vllm_gpu,
-                                    gpu_id=args.vllm_gpu)
+                                    port=30000 + _sgl_gpu,
+                                    gpu_id=_sgl_gpu)
             else:
                 if colocate:
                     sglang_resume_memory()
