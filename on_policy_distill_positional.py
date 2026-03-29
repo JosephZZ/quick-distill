@@ -829,8 +829,8 @@ def main():
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--student_gpu", type=int, default=0)
     parser.add_argument("--teacher_gpu", type=int, default=1)
-    parser.add_argument("--vllm_gpu", type=int, default=None,
-                       help="GPU for vLLM generation (default: same as student_gpu). "
+    parser.add_argument("--vllm_gpu", "--sglang_gpu", type=int, default=None,
+                       help="GPU for vLLM/SGLang generation (default: same as student_gpu). "
                             "Set to a separate GPU to avoid model offloading.")
     
     # New parameter: position limit
@@ -1334,7 +1334,9 @@ def main():
                         _msi_dev = mapped_student_ids.to(shift_logits_i.device)
                         # Bounds check: clamp indices to valid range
                         _msi_dev = _msi_dev.clamp(max=shift_logits_i.shape[-1] - 1)
-                        s_logits_shared = shift_logits_i[start:start+k][:, _msi_dev]
+                        # Use sel_idx to pick the correct positions (not just first k)
+                        s_logits_selected = shift_logits_i[start:start+resp_len].index_select(0, sel_idx)
+                        s_logits_shared = s_logits_selected[:, _msi_dev]
                         s_log_probs_shared = log_softmax(s_logits_shared.float(), dim=-1)
 
                         # Reverse KL over shared vocab: KL(student_shared || teacher_shared)
