@@ -29,6 +29,10 @@ Positional loss (training only on the first N response tokens) is effective acro
 | Math | FullFT | Pos-100 | 100 | avg@4 | 56.20% |
 | Math | FullFT | Pos-200tok | 200 | avg@4 | 56.40% |
 | Math | FullFT | Full-seq | 200 | avg@4 | 58.20% |
+| Math | LoRA | Random-100 | 150 | avg@4 | 63.05% |
+| Math | LoRA | TopEnt-Teacher-100 | 150 | avg@4 | 62.20% |
+| Math | LoRA | TopEnt-Student-100 | 100 | avg@4 | 61.35% |
+| Math | LoRA | TopKL-100 | 50 | avg@4 | 58.60% |
 | Coding | LoRA | Pos-50 | 350 | HE | 42.1 |
 | Coding | LoRA | Pos-100 | 150 | HE | 42.1 |
 | Coding | LoRA | Pos-150 | 250 | HE | 41.5 |
@@ -276,6 +280,68 @@ Note: No full-seq LoRA experiment was run for the n1bs16 config.
 
 ---
 
+## Selective Token Distillation -- Math LoRA (n1, 3200 problems, bs=16, SGLang)
+
+These experiments select the top-k tokens by different criteria (rather than the first k positional tokens) and compute loss only on those. All use full-length generation (max_new_tokens=2048) with SGLang, then select k=100 tokens for loss. Compared against positional prefix baselines above.
+
+### Top-KL (k=100)
+
+Selects 100 tokens with highest per-token KL divergence between student and teacher.
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 58.60% | 65.80% | 74.40% |
+| 100 | 45.70% | 62.40% | 70.80% |
+| 150 | 53.30% | 63.00% | 75.20% |
+| 200 | 52.25% | 64.40% | 72.40% |
+
+### Top-Entropy (Student, k=100)
+
+Selects 100 tokens where the student has highest entropy (most uncertain).
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 61.15% | 67.60% | 74.40% |
+| 100 | 61.35% | 67.20% | 73.20% |
+| 150 | 60.75% | 66.20% | 75.00% |
+| 200 | 54.60% | 67.80% | 73.80% |
+
+### Top-Entropy (Teacher, k=100)
+
+Selects 100 tokens where the teacher has highest entropy (most uncertain).
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 59.85% | 65.80% | 75.40% |
+| 100 | 60.85% | 66.40% | 75.00% |
+| 150 | 62.20% | 67.80% | 75.80% |
+| 200 | 61.70% | 67.00% | 74.80% |
+
+### Random (k=100)
+
+Selects 100 random tokens from the full sequence as a control.
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 61.80% | 66.80% | 75.80% |
+| 100 | 62.05% | 68.60% | 76.60% |
+| 150 | 63.05% | 69.20% | 76.80% |
+| 200 | 62.75% | 68.80% | 75.80% |
+
+### Selective vs Positional Comparison (best avg@4, k=100)
+
+| Method | Best Step | avg@4 | maj@4 | pass@4 |
+|--------|-----------|-------|-------|--------|
+| **Pos-100 (prefix)** | **200** | **65.85%** | **70.80%** | **79.80%** |
+| Random-100 | 150 | 63.05% | 69.20% | 76.80% |
+| Top-Entropy-Teacher-100 | 150 | 62.20% | 67.80% | 75.80% |
+| Top-Entropy-Student-100 | 100 | 61.35% | 67.20% | 73.20% |
+| Top-KL-100 | 50 | 58.60% | 65.80% | 74.40% |
+
+**Note**: 3 additional experiments are still pending (not yet started training): `fullseq-n1bs16-sglang`, `topkl-k100-hf`, `topkl-k50-sglang`.
+
+---
+
 ## Key Findings
 
 1. **Positional loss works across tasks.** Both math and coding benefit from positional distillation, confirming it is not a math-specific trick.
@@ -297,6 +363,8 @@ Note: No full-seq LoRA experiment was run for the n1bs16 config.
 
 5. **Sweet spot: pos-50 to pos-200tok** depending on task and training method.
 
+6. **Positional prefix beats selective token methods.** At k=100 tokens, the positional prefix (first 100 tokens) achieves 65.85% avg@4, outperforming all selective methods: random (63.05%), top-entropy-teacher (62.20%), top-entropy-student (61.35%), and top-KL (58.60%). This confirms the **cascade effect hypothesis**: early-token improvements propagate through autoregressive generation, making position more important than raw signal concentration. Notably, top-KL performs worst despite targeting the highest-divergence tokens — likely because it focuses on format/style disagreements rather than reasoning (see `docs/selective_token_analysis.md`).
+
 ---
 
 ## File Paths
@@ -316,3 +384,4 @@ Note: No full-seq LoRA experiment was run for the n1bs16 config.
 - Math FullFT n1: `checkpoints/fullft-{pos50,pos100,pos200tok,fullseq}-n1/`
 - Coding LoRA: `checkpoints/coding-lora-{pos50,pos100,pos150,pos250,fullseq}-n1/`
 - Coding FullFT: `checkpoints/coding-fullft-{pos50,pos100,pos150,pos250,pos200tok,fullseq}-n1/`
+- Selective token (on scai5): `checkpoints/{topkl-k100-sglang,top_entropy_student-k100-sglang,top_entropy_teacher-k100-sglang,random-k100-sglang}/`

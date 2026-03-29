@@ -356,25 +356,31 @@ Same student–teacher matrix as Sections 2–4 (Configs A–E), but **`position
 
 #### avg@4
 
+**⚠️ Source: infrawaves server. Results may be unreliable — verify before using in paper.**
+
 | Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
 |--------|---------|---------|---------|----------|----------|----------|----------|-----------|
-| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
-| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
-| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
-| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| A | M-1.5B | Q3-4B | 14.80% | 10.50% | 11.90% | 11.85% | **14.80%** | 50 |
+| B | M-1.5B | Q3-8B | 10.80% | 10.10% | 12.40% | 22.60%† | **12.40%** | 150 |
+| C | Q3-1.7B | Q3-4B | **65.85%** | 65.55% | 65.15% | 65.30% | **65.85%** | 50 |
+| D | Q3-1.7B | Q3-8B | ✗ | ✗ | ✗ | ✗ | — | — |
 | E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+
+†Config B step 200 only has `accuracy` field (no avg@4/maj@4); 22.6% is pass@4, not avg@4.
+✗Config D evals all marked "skip-broken-eval".
+Config E (Q3-4B→Q3-8B) did not start training (empty train_log).
+
+**⚠️ Config A/B results are catastrophically low** (14.8% / 12.4% avg@4 vs 50.95% baseline). Likely caused by fullseq \boxed{} repetition degradation or eval extraction bugs. Config A used max_new_tokens=1024 with HF generation (no vLLM/SGLang). Config B used n_samples=16, 200 problems (different from n1bs16 3200 problems config).
 
 #### pass@4
 
 | Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
 |--------|---------|---------|---------|----------|----------|----------|----------|-----------|
-| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
-| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
-| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
-| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
+| A | M-1.5B | Q3-4B | 26.20% | 18.60% | 22.40% | 20.80% | **26.20%** | 50 |
+| B | M-1.5B | Q3-8B | 19.00% | 19.00% | 22.80% | 22.60% | **22.80%** | 150 |
+| C | Q3-1.7B | Q3-4B | **78.00%** | 76.60% | 75.80% | 76.80% | **78.00%** | 50 |
+| D | Q3-1.7B | Q3-8B | ✗ | ✗ | ✗ | ✗ | — | — |
 | E | Q3-4B | Q3-8B | — | — | — | — | — | — |
-
-*Fill from each run’s `checkpoints/scale-*-math-fullseq/eval_step_{50,100,150,200}/summary.json` (and derived avg@4 / pass@4 if computed outside `summary.json`).*
 
 ### 7.2 Function Calling (name_acc / full_acc)
 
@@ -398,7 +404,7 @@ Same student–teacher matrix as Sections 2–4 (Configs A–E), but **`position
 | D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
 | E | Q3-4B | Q3-8B | — | — | — | — | — | — |
 
-*Fill from `checkpoints/scale-*-funcall-fullseq/eval_step_*/summary.json`.*
+**⚠️ Source: infrawaves server.** Funcall eval dirs exist for Configs A and B but contain no summary.json files. Config C has only step_200 checkpoint (incomplete training). Configs D, E did not complete training. No funcall fullseq metrics available yet.
 
 ### 7.3 Coding (HumanEval / MBPP, pass@1)
 
@@ -442,10 +448,18 @@ Same student–teacher matrix as Sections 2–4 (Configs A–E), but **`position
 | D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
 | E | Q3-4B | Q3-8B | — | — | — | — | — | — |
 
-*Coding metrics require `evalplus` on the jsonl files under each `eval_step_*` (same workflow as pos-100 scaling); the training script only drops a stub `summary.json` for coding.*
+**⚠️ Source: infrawaves server.** Coding eval dirs exist for Configs A, B, and D with `{"status":"done"}` stubs but no actual HE/MBPP metrics. These need `evalplus` scoring on the generated jsonl files. Config C has checkpoints but no eval dirs. Config E did not start training.
 
-### 7.4 Full-seq vs pos-100 (best step, to be filled)
+### 7.4 Full-seq vs Pos-100 Comparison (Math only, available data)
 
-| Config | Task | Best pos-100 | Best full-seq | Notes |
-|--------|------|--------------|---------------|-------|
-| A–E | Math / Funcall / Coding | see §§2–4 | see §7.1–7.3 | Compare after tables above are filled |
+**⚠️ Source: infrawaves server. Results may be unreliable — verify before using in paper.**
+
+| Config | Student→Teacher | Pos-100 Best avg@4 | Fullseq Best avg@4 | Δ | Notes |
+|--------|----------------|--------------------|--------------------|---|-------|
+| A | M-1.5B→Q3-4B | **68.95%** (s150) | 14.80% (s50) | -54.2 | ⚠️ Fullseq catastrophically broken |
+| B | M-1.5B→Q3-8B | **67.85%** (s200) | 12.40% (s150) | -55.5 | ⚠️ Fullseq catastrophically broken; different config (n16/200p) |
+| C | Q3-1.7B→Q3-4B | **69.20%** (s100) | 65.85% (s50) | -3.4 | Fullseq 3.4pp below pos-100 |
+| D | Q3-1.7B→Q3-8B | **69.15%** (s100) | ✗ broken eval | — | |
+| E | Q3-4B→Q3-8B | 77.05% (s100) | — not trained | — | |
+
+**Summary**: Config C is the only reliable comparison point. Fullseq achieves 65.85% vs pos-100's 69.20% (-3.4pp), consistent with the finding that positional distillation outperforms fullseq. Configs A/B show catastrophic fullseq failure for the M-1.5B student, likely due to \boxed{} repetition degradation compounded by the max_new_tokens=1024 setting with HF generation (no vLLM).

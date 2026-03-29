@@ -836,7 +836,7 @@ def main():
         "--token_select_mode",
         type=str,
         default="prefix",
-        choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher"],
+        choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random"],
         help="Which response tokens to distill: prefix (first N), top_kl, top_entropy_student, top_entropy_teacher",
     )
     parser.add_argument("--progressive_position", action="store_true",
@@ -861,10 +861,16 @@ def main():
                        help="Field name for problem text in dataset (default: 'problem' for NuminaMath)")
     parser.add_argument("--system_prompt", type=str, default=None,
                        help="System prompt for generation (default: math reasoning prompt)")
+    parser.add_argument("--single_gpu", action="store_true",
+                       help="Single-GPU mode: only one model on GPU at a time (student/teacher/sglang take turns)")
 
     args = parser.parse_args()
     if args.vllm_gpu is None:
         args.vllm_gpu = args.student_gpu
+    # Auto-detect single-GPU mode when all GPUs are the same
+    single_gpu = args.single_gpu or (args.student_gpu == args.teacher_gpu == args.vllm_gpu)
+    if single_gpu:
+        print("Single-GPU mode: models will take turns on the GPU")
     if args.token_select_mode != "prefix" and args.position_limit <= 0:
         raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
 
@@ -923,14 +929,18 @@ def main():
     else:
         print("  Same tokenizer — no vocab mapping needed.")
 
-    # Load teacher model on GPU 1 using HF
+    # Load teacher model
     teacher_device = f"cuda:{args.teacher_gpu}"
-    print(f"Loading teacher model {args.teacher_model} on {teacher_device}...")
+    print(f"Loading teacher model {args.teacher_model}...")
     teacher_model = AutoModelForCausalLM.from_pretrained(
         args.teacher_model, torch_dtype=torch.bfloat16, trust_remote_code=True,
-    ).to(teacher_device)
+    )
+    if not single_gpu:
+        teacher_model = teacher_model.to(teacher_device)
+        print(f"Teacher model loaded on {teacher_device}.")
+    else:
+        print(f"Teacher model loaded on CPU (single-GPU mode, will move to {teacher_device} for scoring).")
     teacher_model.eval()
-    print("Teacher model loaded.")
 
     # Initialize LoRA config (skip if full finetune)
     lora_config = None
@@ -1023,7 +1033,7 @@ def main():
             # SGLang colocate path: SGLang and student share the same GPU
             # via enable_memory_saver (release/resume GPU memory)
             colocate = (args.vllm_gpu == args.student_gpu)
-            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (SGLang, {'colocate' if colocate else 'separate GPU'})...")
+            print(f"  Chunk {chunk_idx+1}/{len(chunks)}: generating {len(chunk_problems)} × {args.n_samples} trajectories (SGLang, {'colocate' if colocate else 'separate GPU'}{', single-GPU restart' if single_gpu else ''})...")
 
             # 1. Save merged model for SGLang weight update
             merged_gen_path = os.path.join(args.output_dir, "_sglang_merged")
@@ -1039,8 +1049,17 @@ def main():
                 gc.collect()
                 torch.cuda.empty_cache()
 
-            # 3. Start server on first call, or resume + update weights
-            if _sglang_process is None:
+            # 3. Start/manage SGLang server
+            if single_gpu:
+                # Single-GPU: kill old server, start fresh each step to fully free GPU
+                stop_sglang_server()
+                gc.collect()
+                torch.cuda.empty_cache()
+                start_sglang_server(merged_gen_path, args.student_model,
+                                    gpu_memory_utilization=args.vllm_gpu_util,
+                                    port=30000 + args.vllm_gpu,
+                                    gpu_id=args.vllm_gpu)
+            elif _sglang_process is None:
                 start_sglang_server(merged_gen_path, args.student_model,
                                     gpu_memory_utilization=args.vllm_gpu_util,
                                     port=30000 + args.vllm_gpu,
@@ -1056,8 +1075,13 @@ def main():
                 args.temperature, tokenizer, system_prompt=args.system_prompt,
             )
 
-            # 5. If colocate, release SGLang memory and move student back to GPU
-            if colocate:
+            # 5. Release GPU for next phase
+            if single_gpu:
+                # Kill SGLang completely to free all GPU memory
+                stop_sglang_server()
+                gc.collect()
+                torch.cuda.empty_cache()
+            elif colocate:
                 sglang_release_memory()
                 gc.collect()
                 torch.cuda.empty_cache()
@@ -1107,10 +1131,12 @@ def main():
             if offload_student or offload_teacher:
                 gc.collect()
                 torch.cuda.empty_cache()
-            if offload_student:
-                student.to(student_device)
-            if offload_teacher:
-                teacher_model.to(teacher_device)
+            if not single_gpu:
+                if offload_student:
+                    student.to(student_device)
+                if offload_teacher:
+                    teacher_model.to(teacher_device)
+            # single_gpu: both stay on CPU; teacher loaded for scoring, student for training
 
             # 5. Cleanup
             if os.path.exists(merged_gen_path):
@@ -1131,6 +1157,9 @@ def main():
 
         if all_trajectories is None:
             print(f"  Generation failed for chunk {chunk_idx+1}, skipping...")
+            if single_gpu:
+                # Ensure student is back on GPU for next iteration
+                student.to(student_device)
             step += 1
             continue
 
@@ -1139,6 +1168,13 @@ def main():
         print(f"Generated {total_trajs} trajectories for {len(chunk_problems)} problems ({gen_time:.0f}s)")
 
         # ---- Phase 2: Score all trajectories in this chunk with teacher ----
+        # Single-GPU: swap student out (if on GPU), load teacher in
+        if single_gpu:
+            student.to("cpu")  # no-op if already on CPU (sglang/vllm paths)
+            gc.collect()
+            torch.cuda.empty_cache()
+            teacher_model.to(teacher_device)
+
         # Compute current position limit (progressive or fixed)
         step += 1
         if args.progressive_position:
@@ -1173,6 +1209,13 @@ def main():
             continue
 
         # ---- Phase 3: Train on all trajectories in this chunk (one optimizer step) ----
+        # Single-GPU: swap teacher out, reload student for training
+        if single_gpu:
+            teacher_model.to("cpu")
+            gc.collect()
+            torch.cuda.empty_cache()
+            student.to(student_device)
+
         train_start = time.time()
         optimizer.zero_grad()
         n_trajs = len(all_chunk_trajs)
@@ -1256,6 +1299,9 @@ def main():
                             pt = torch.exp(t_log_probs_all)
                             ent_per_pos = -(pt * t_log_probs_all).sum(dim=-1)
                             sel_idx = torch.topk(ent_per_pos, k=k, largest=True).indices
+                    elif args.token_select_mode == "random":
+                        perm = torch.randperm(resp_len, device=student_device)
+                        sel_idx = perm[:k]
                     else:
                         raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
 
