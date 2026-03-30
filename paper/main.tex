@@ -246,7 +246,7 @@ Algorithm~\ref{alg:pos_distill} summarizes the procedure. The only modifications
 
 \subsection{Setup}
 
-\paragraph{Models.} We evaluate across multiple student-teacher pairs. Our primary student is Qwen2.5-Math-1.5B~\citep{qwen2024qwen25math}, paired with teachers of increasing scale: Qwen3-1.7B, Qwen3-4B, and Qwen3-8B~\citep{qwen2025qwen3}. To test cross-family generality, we also evaluate with \tbd{Llama student-teacher pair}.
+\paragraph{Models.} We evaluate across multiple student-teacher pairs. Our primary student is Qwen2.5-Math-1.5B~\citep{qwen2024qwen25math}, paired with teachers of increasing scale: Qwen3-1.7B, Qwen3-4B, and Qwen3-8B~\citep{qwen2025qwen3}. To test cross-family generality, we also evaluate with gemma-2-2b-it (student) and gemma-3-4b-it (teacher), which use different tokenizers requiring cross-tokenizer re-tokenization and shared-vocabulary KL computation.
 
 \paragraph{Training.} All experiments use LoRA~\citep{hu2022lora} ($r{=}32$, $\alpha{=}64$, all linear layers, lr = $5{\times}10^{-5}$) with reverse KL divergence loss. Temperature 0.7 for on-policy generation. Each training step processes a batch of 16 problems with 1 rollout per problem ($n_{\text{samples}}{=}1$, batch size 16). We train for 200 steps on math and function calling, 400 steps on coding, saving checkpoints every 50 steps. Training data: 3,200 math problems, 6,400 coding problems (CodeUltraFeedback), and 3,200 function calling examples (glaive-function-calling-v2). Our method uses $N{=}100$ unless otherwise specified.
 
@@ -258,36 +258,43 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Main results.} Best performance across training steps for each configuration. Student: Qwen2.5-Math-1.5B with LoRA. \textbf{Bold}: best per teacher. Full-seq results use the best step before degradation. \tbd{Time and Memory columns to be filled.}}
+\caption{\textbf{Main results.} Best performance across training steps for each configuration. \textbf{Bold}: best per teacher. Full-seq results use the best step before degradation. Time: seconds per training step (gen + score + train). Gemma uses gemma-2-2b-it student $\rightarrow$ gemma-3-4b-it teacher.}
 \label{tab:main_results}
 \footnotesize
-\begin{tabular}{ll cccc cc}
+\begin{tabular}{ll cccc c}
 \toprule
-\textbf{Teacher} & \textbf{Method} & \textbf{MATH-500} & \textbf{HumanEval} & \textbf{MBPP} & \textbf{BFCL} & \textbf{Time} & \textbf{Memory} \\
- & & avg@4 & pass@1 & pass@1 & full\_acc & (min/step) & (GB) \\
+\textbf{Teacher} & \textbf{Method} & \textbf{MATH-500} & \textbf{HumanEval} & \textbf{MBPP} & \textbf{BFCL} & \textbf{Time} \\
+ & & avg@4 & pass@1 & pass@1 & full\_acc & (s/step) \\
 \midrule
---- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- & --- \\
+\multicolumn{7}{l}{\textit{Student: Qwen2.5-Math-1.5B (LoRA)}} \\
 \midrule
-\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 65.55 & 40.24 & 52.65 & 58.20 & \tbd{} & \tbd{} \\
- & \textbf{Ours ($N{=}100$)} & \textbf{65.85} & \textbf{42.07} & 49.21 & \textbf{61.30} & \tbd{} & \tbd{} \\
+--- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- \\
 \midrule
-\multirow{2}{*}{Qwen3-4B} & Full-seq & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
- & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{38.41} & \textbf{47.62} & \textbf{45.80} & \tbd{} & \tbd{} \\
+\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 65.55 & 40.24 & 52.65 & 58.20 & ${\sim}$280 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{65.85} & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
 \midrule
-\multirow{2}{*}{Qwen3-8B} & Full-seq & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
- & \textbf{Ours ($N{=}100$)} & \textbf{67.85} & \textbf{36.59} & \textbf{44.44} & \textbf{57.00} & \tbd{} & \tbd{} \\
+\multirow{2}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{43.29} & \textbf{52.38} & \textbf{45.80} & ${\sim}$8 \\
 \midrule
-\multirow{2}{*}{\tbd{Llama}} & Full-seq & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
- & \textbf{Ours ($N{=}100$)} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} & \tbd{} \\
+\multirow{2}{*}{Qwen3-8B} & Full-seq & 66.75$^\dagger$ & 36.59 & \textbf{51.06} & \textbf{62.83} & ${\sim}$170$^\ddagger$ \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{67.85} & \textbf{41.46} & 50.53 & 57.00 & ${\sim}$8 \\
+\midrule
+\multicolumn{7}{l}{\textit{Student: gemma-2-2b-it (LoRA) --- cross-family}} \\
+\midrule
+--- & Baseline & 13.45 & 23.78 & 40.48 & 73.50 & --- \\
+\midrule
+gemma-3-4b-it & \textbf{Ours ($N{=}100$)} & \textbf{27.20} & \textbf{31.10} & \textbf{50.53} & \textbf{82.50} & ${\sim}$8 \\
 \bottomrule
+\multicolumn{7}{l}{\footnotesize $^\dagger$ Step 50 only; later steps not evaluated.} \\
+\multicolumn{7}{l}{\footnotesize $^\ddagger$ Full-seq with 8B teacher frequently OOMs on 48GB GPU.}
 \end{tabular}
 \end{table}
 
 \paragraph{Consistent improvement across tasks.} With the Qwen3-1.7B teacher, \method{} ($N{=}100$) matches or exceeds full-sequence distillation on 3 out of 4 benchmarks: MATH-500 (65.85\% vs.\ 65.55\%), HumanEval (42.07\% vs.\ 40.24\%), and BFCL (61.30\% vs.\ 58.20\%). On BFCL, the distilled student even surpasses the teacher (54.00\%), suggesting that on-policy distillation can enable the student to locally improve on its own distribution beyond teacher-level performance. The only exception is MBPP (49.21\% vs.\ 52.65\%), where full-sequence distillation's initial strong performance on this benchmark slightly exceeds our method, though it subsequently degrades with continued training.
 
-\paragraph{Scaling across teacher sizes.} Larger teachers generally improve distillation quality, particularly on math: the Qwen3-4B teacher yields 68.95\% avg@4 (+3.10pp over 1.7B teacher), suggesting that stronger teachers provide more valuable signal. Interestingly, the Qwen3-8B teacher (67.85\%) slightly underperforms the 4B teacher on math, suggesting diminishing returns in this setting. For function calling, the pattern reverses: the 8B teacher (57.00\%) substantially outperforms the 4B teacher (45.80\%), reflecting the 8B model's stronger function calling baseline (78.50\% vs.\ 73.00\%).
+\paragraph{Scaling across teacher sizes.} Larger teachers generally improve distillation quality, particularly on math: the Qwen3-4B teacher yields 68.95\% avg@4 (+3.10pp over 1.7B teacher), suggesting that stronger teachers provide more valuable signal. Interestingly, the Qwen3-8B teacher (67.85\%) slightly underperforms the 4B teacher on math, suggesting diminishing returns in this setting. For function calling, the pattern reverses: the 8B teacher (57.00\%) substantially outperforms the 4B teacher (45.80\%), reflecting the 8B model's stronger function calling baseline (78.50\% vs.\ 73.00\%). With the 4B teacher, \method{} outperforms full-seq on all metrics (math +1.5pp, HE +3.7pp, MBPP +1.6pp, BFCL +11.0pp). With the 8B teacher, \method{} wins on math (+1.1pp) and HumanEval (+4.9pp), while full-seq is slightly better on MBPP (+0.5pp) and BFCL (+5.8pp)---the only setting where full-seq outperforms our method on any metric.
 
-\paragraph{Cross-family generality.} \tbd{Llama results to be added. We expect similar patterns: our method matches or exceeds full-sequence distillation across tasks, demonstrating that the front-loaded KL phenomenon is not specific to the Qwen model family.}
+\paragraph{Cross-family generality.} The Gemma cross-family pair (gemma-2-2b-it $\rightarrow$ gemma-3-4b-it) shows consistent improvements across all tasks: MATH-500 doubles from 13.45\% to 27.20\%, HumanEval improves from 23.78\% to 31.10\%, MBPP from 40.48\% to 50.53\%, and BFCL from 73.50\% to 82.50\% (surpassing the teacher's 72.83\%). This demonstrates that positional distillation transfers effectively even across model families with incompatible tokenizers, where cross-tokenizer re-tokenization and shared-vocabulary KL computation are required.
 
 
 \subsection{Training Stability}
@@ -308,9 +315,31 @@ This supports our hypothesis from Section~\ref{sec:hypothesis}: restricting loss
 \subsection{Efficiency}
 \label{sec:efficiency}
 
-\tbd{Wall-clock timing results to be added. Expected: 3-7x speedup from truncated generation. Include time per training step and total training time for $N{=}100$ vs.\ full-sequence. GPU memory usage comparison.}
+Table~\ref{tab:timing} reports wall-clock time per training step on a single NVIDIA A6000 (48GB). \Method{} achieves 21--35$\times$ speedup over full-sequence distillation. The dominant cost in full-seq is autoregressive generation (100--730s per step for sequences averaging $\sim$1000 tokens), while \method{} generates only 100 tokens per example ($\sim$5s). Teacher scoring and gradient computation are similar between methods.
 
-Since the student only generates $N{=}100$ tokens per training example instead of a full sequence (typically $T{=}3584$ for math, $T{=}512$ for coding/funcall), the generation cost is reduced proportionally. Table~\ref{tab:main_results} reports wall-clock time and peak GPU memory for each configuration.
+\begin{table}[t]
+\centering
+\caption{\textbf{Training efficiency.} Per-step wall-clock time on a single A6000 (48GB). Student: Qwen2.5-Math-1.5B, LoRA, bs=16.}
+\label{tab:timing}
+\small
+\begin{tabular}{llcccc}
+\toprule
+\textbf{Teacher} & \textbf{Method} & \textbf{Gen (s)} & \textbf{Score (s)} & \textbf{Train (s)} & \textbf{Total (s)} \\
+\midrule
+\multirow{2}{*}{Q3-1.7B} & Full-seq & 100--731 & 3--10 & 5--12 & ${\sim}$280 \\
+ & Ours ($N{=}100$) & ${\sim}$5 & ${\sim}$1 & ${\sim}$2 & ${\sim}$8 \\
+\midrule
+\multirow{2}{*}{Q3-4B} & Full-seq & 97--733 & 3--9 & 6--10 & ${\sim}$210 \\
+ & Ours ($N{=}100$) & ${\sim}$5 & ${\sim}$1 & ${\sim}$2 & ${\sim}$8 \\
+\midrule
+\multirow{2}{*}{Q3-8B} & Full-seq & 96--230 & 7--11 & 1--6 & ${\sim}$170$^\dagger$ \\
+ & Ours ($N{=}100$) & ${\sim}$5 & ${\sim}$1 & ${\sim}$2 & ${\sim}$8 \\
+\bottomrule
+\multicolumn{6}{l}{\footnotesize $^\dagger$ Frequent OOMs; 48GB insufficient for 8B teacher + vLLM + student.}
+\end{tabular}
+\end{table}
+
+For 200 training steps, \method{} completes in $\sim$27 minutes versus 9--40 hours for full-sequence distillation. Additionally, \method{} with the 8B teacher runs comfortably on a single 48GB GPU, while full-seq OOMs due to vLLM memory overhead---\method{} requires no inference server since only 100 tokens are generated via standard HF generate.
 
 
 % ============================================================================

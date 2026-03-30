@@ -21,6 +21,7 @@ Our work builds on the on-policy reverse KL paradigm of \citet{agarwal2024onpoli
 \paragraph{Token-Level Importance in Distillation and Reasoning.}
 A growing body of work demonstrates that not all tokens contribute equally to learning.
 \citet{wang2025beyond8020} showed that only $\sim$20\% of chain-of-thought tokens have high entropy, and these ``forking tokens'' steer reasoning paths---applying RL gradients to only these tokens matches full-gradient performance.
+In the RL fine-tuning setting, \citet{vassoyan2025ignorekl} demonstrated that uniform KL penalties across all token positions prevent exploration on ``critical tokens'' where the pretrained model is most uncertain, and proposed entropy-weighted KL relaxation that allows the model to deviate from its prior precisely where it needs to learn.
 \citet{li2025preplan} discovered a ``preplan-and-anchor'' mechanism in LLM attention patterns, where models first perform long-range contextual reference before producing semantic anchor tokens, enabling targeted credit assignment.
 \citet{singh2026functional} proposed greedy pruning of reasoning chains and showed that LLMs internally encode token-level functional importance for answer generation.
 
@@ -30,7 +31,8 @@ In the distillation setting specifically, several concurrent works have explored
 \citet{tavor2026rethinking} systematically disentangled selective KD along position, class, and sample axes, proposing student-entropy-guided position selection (SE-KD) that reduces wall time by 70\% without sacrificing accuracy.
 \citet{kim2026tsdkd} combined entropy-based token selection with preference ranking in a dual distillation framework.
 
-Our approach differs from all of these in a fundamental way: we use \emph{absolute position} as the sole selection criterion, requiring no per-token computation of entropy, difficulty, or verification scores.
+These works collectively establish that not all tokens deserve equal treatment during training.
+Our approach differs in using \emph{absolute position} as the sole selection criterion, requiring no per-token computation of entropy, difficulty, or verification scores.
 This simplicity is motivated by our empirical finding that KL divergence between teacher and student concentrates at early positions corresponding to reasoning strategy selection.
 Furthermore, unlike prior token-selection methods that aim primarily at efficiency or robustness, we show that positional loss also eliminates training instability---a qualitative benefit that token-level adaptive methods do not address.
 
