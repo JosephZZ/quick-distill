@@ -441,13 +441,19 @@ Config E (Q3-4B→Q3-8B) did not start training (empty train_log).
 
 | Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
 |--------|---------|---------|---------|----------|----------|----------|----------|-----------|
-| A | M-1.5B | Q3-4B | — | — | — | — | — | — |
-| B | M-1.5B | Q3-8B | — | — | — | — | — | — |
-| C | Q3-1.7B | Q3-4B | — | — | — | — | — | — |
-| D | Q3-1.7B | Q3-8B | — | — | — | — | — | — |
-| E | Q3-4B | Q3-8B | — | — | — | — | — | — |
+| A | M-1.5B | Q3-4B | 16.17% | 32.00% | 31.33% | **34.83%** | **34.83%** | 200 |
+| B | M-1.5B | Q3-8B | 31.67% | 61.50% | 60.17% | **62.83%** | **62.83%** | 200 |
+| D | Q3-1.7B | Q3-8B | 70.17% | 70.83% | 69.67% | **71.33%** | **71.33%** | 200 |
 
-**⚠️ Source: infrawaves server.** Funcall eval dirs exist for Configs A and B but contain no summary.json files. Config C has only step_200 checkpoint (incomplete training). Configs D, E did not complete training. No funcall fullseq metrics available yet.
+#### name_acc
+
+| Config | Student | Teacher | Step 50 | Step 100 | Step 150 | Step 200 | **Best** | Best Step |
+|--------|---------|---------|---------|----------|----------|----------|----------|-----------|
+| A | M-1.5B | Q3-4B | 27.33% | 50.67% | 47.83% | **52.17%** | **52.17%** | 200 |
+| B | M-1.5B | Q3-8B | 51.83% | 80.83% | 79.50% | **83.33%** | **83.33%** | 200 |
+| D | Q3-1.7B | Q3-8B | **98.17%** | 98.17% | 98.17% | 98.17% | **98.17%** | all |
+
+Checkpoints from infrawaves, eval on scai4 (vLLM, A6000).
 
 ### 7.3 Coding (HumanEval / MBPP, pass@1)
 
@@ -506,3 +512,42 @@ Config E (Q3-4B→Q3-8B) did not start training (empty train_log).
 | E | Q3-4B→Q3-8B | 77.05% (s100) | — not trained | — | |
 
 **Summary**: Config C is the only reliable comparison point. Fullseq achieves 65.85% vs pos-100's 69.20% (-3.4pp), consistent with the finding that positional distillation outperforms fullseq. Configs A/B show catastrophic fullseq failure for the M-1.5B student, likely due to \boxed{} repetition degradation compounded by the max_new_tokens=1024 setting with HF generation (no vLLM).
+
+---
+
+## 9. Pos-100 vs Full-Seq: Comprehensive Comparison
+
+All results use LoRA (r=32), n_samples=1, bs=16, 3200 problems, 200 steps. Best across all training steps.
+
+### 9.1 Math (MATH-500, avg@4)
+
+| Config | Student→Teacher | Baseline | Pos-100 | Fullseq | Δ (pos-fullseq) |
+|--------|----------------|----------|---------|---------|-----------------|
+| — | M-1.5B→Q3-1.7B | 50.95% | **65.85%** | 62.35% | **+3.50** |
+| A | M-1.5B→Q3-4B | 50.95% | **68.95%** | 14.80%⚠️ | — (broken) |
+| B | M-1.5B→Q3-8B | 50.95% | **67.85%** | 12.40%⚠️ | — (broken) |
+| C | Q3-1.7B→Q3-4B | 69.20% | **69.20%** | 65.85% | **+3.35** |
+| D | Q3-1.7B→Q3-8B | 69.20% | **69.15%** | ✗ | — |
+
+⚠️ Config A/B fullseq math used wrong config (HF gen, max_new_tokens=1024) on infrawaves — results broken. UCLACG results (§6) with correct config show A=67.45%, B=66.75% (step 50 only).
+
+### 9.2 Function Calling (full_acc)
+
+| Config | Student→Teacher | Baseline | Pos-100 | Fullseq | Δ (pos-fullseq) |
+|--------|----------------|----------|---------|---------|-----------------|
+| — | M-1.5B→Q3-1.7B | 2.70% | **61.30%** | 7.67% | **+53.63** |
+| A | M-1.5B→Q3-4B | 2.70% | **45.80%** | 34.83% | **+10.97** |
+| B | M-1.5B→Q3-8B | 2.70% | **57.00%** | 62.83% | **-5.83** |
+| D | Q3-1.7B→Q3-8B | 59.80% | **74.00%** | 71.33% | **+2.67** |
+
+### 9.3 Key Findings
+
+1. **Pos-100 beats fullseq on math consistently.** Where comparable configs exist (M-1.5B→Q3-1.7B, Q3-1.7B→Q3-4B), pos-100 outperforms fullseq by ~3.5pp on MATH-500.
+
+2. **Funcall: pos-100 dominates for weak students.** M-1.5B→Q3-1.7B shows the largest gap: pos-100 achieves 61.30% vs fullseq 7.67%. Fullseq generates unparseable outputs (parse_rate ~40%).
+
+3. **Exception: 8B teacher funcall fullseq beats pos-100.** Config B (M-1.5B→Q3-8B) fullseq achieves 62.83% vs pos-100's 57.00%. The 8B teacher may provide enough signal in later positions to overcome the degradation issue for funcall.
+
+4. **Fullseq funcall improves with training** (unlike math which degrades). Config A fullseq funcall goes from 16.17% (step 50) to 34.83% (step 200). Config B from 31.67% to 62.83%. This suggests funcall format learning requires more tokens/steps.
+
+5. **Q3-1.7B→Q3-8B funcall fullseq is stable and strong** (71.33%), close to pos-100 (74.00%). Same-family distillation with fullseq doesn't degrade as badly as cross-architecture.
