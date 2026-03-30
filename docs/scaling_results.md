@@ -249,13 +249,56 @@ All use LoRA (r=32), n_samples=1, chunk_size=16 (3200 problems), 200 steps, max_
 | A (4B) | Coding | HE+ | **38.4%** (s100) | 31.7% (s50) | +6.7 | **Pos-100** |
 | A (4B) | Coding | MBPP+ | **47.6%** (s150) | 45.0% (s50) | +2.6 | **Pos-100** |
 
-### 6.4 Key Findings
+### 6.4 Timing & Memory Comparison
+
+All measurements: Student=Qwen2.5-Math-1.5B, bs=16, n_samples=1, single A6000 48GB GPU, HF generate (batch).
+Times are per training step (16 problems). Averaged over multiple steps.
+
+#### Per-Step Time Breakdown (Teacher: Qwen3-1.7B)
+
+| Phase | Pos-100 | Full-Seq | Speedup |
+|-------|---------|----------|---------|
+| **Generation** | **5s** (100 tok × 16) | **180s** (3584 tok × 16) | **36×** |
+| Teacher scoring | 1s | 7s | 7× |
+| Training (fwd+bwd) | 2s | 7s | 3.5× |
+| **Total** | **8s** | **194s** | **24×** |
+
+#### Per-Step Time by Teacher Size
+
+| Teacher | Pos-100 total | Full-Seq total |
+|---------|--------------|----------------|
+| Qwen3-1.7B | **8s** | **194s** |
+| Qwen3-4B | **8s** | **199s** |
+| Qwen3-8B | **8s** | **208s** |
+
+Generation time is identical across teacher sizes (only student generates). Scoring/training scale slightly with teacher size.
+
+#### Peak GPU Memory (Teacher: Qwen3-1.7B)
+
+| Phase | Pos-100 | Full-Seq |
+|-------|---------|----------|
+| Generation | 7.2 GB | 8.9 GB |
+| Teacher scoring | 7.3 GB | 14.9 GB |
+| Training (fwd+bwd) | **9.6 GB** | **39.5 GB** |
+
+Full-seq training requires **4× more memory** due to long-sequence activations (avg 1300 tokens vs 100 tokens). At 39.5 GB peak, full-seq barely fits on a 48 GB GPU, while pos-100 at 9.6 GB leaves ample headroom.
+
+#### Wall-Clock Time for 200 Steps
+
+| Method | Time per step | 200 steps | Relative |
+|--------|--------------|-----------|----------|
+| Pos-100 | 8s | **27 min** | 1× |
+| Full-Seq | 194s | **10.8 hours** | **24×** |
+
+**Note on generation method**: All timing measurements use HF `model.generate()` with batch generation (all 16 prompts in a single call). This is a fair comparison — both methods use the same generation backend. In practice, full-seq training often uses vLLM/SGLang subprocesses for faster generation, but this introduces additional overhead from model offloading, subprocess management, and memory fragmentation that makes the actual wall-clock time even slower.
+
+### 6.5 Key Findings
 
 1. **Pos-100 consistently outperforms full-seq.** Across all configs, tasks, and metrics, positional distillation matches or exceeds full-sequence distillation.
 2. **Full-seq degrades after step 50.** Math avg@4 drops from 67% (step 50) to 54% (step 100) with the 4B teacher. This \boxed{} repetition degradation is absent in pos-100.
 3. **Pos-100 is stable across all steps.** Performance stays within ±1% from step 50 to 200, while full-seq varies by >13%.
 4. **Coding shows largest gap.** Pos-100 achieves HE+ 38.4% vs full-seq 31.7% (+6.7pp), likely because full-seq generates very long code sequences that introduce noise.
-5. **Full-seq is 36× slower.** At 180s/step vs 5s/step for generation alone, full-seq requires ~12 hours vs ~30 minutes for 200 steps.
+5. **Pos-100 is 24× faster and uses 4× less memory.** Generation alone is 36× faster (5s vs 180s). Training memory peaks at 9.6 GB vs 39.5 GB, making pos-100 feasible on smaller GPUs where full-seq would OOM.
 
 ---
 
