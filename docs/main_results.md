@@ -29,6 +29,7 @@ Positional loss (training only on the first N response tokens) is effective acro
 | Math | FullFT | Pos-100 | 100 | avg@4 | 56.20% |
 | Math | FullFT | Pos-200tok | 200 | avg@4 | 56.40% |
 | Math | FullFT | Full-seq | 200 | avg@4 | 58.20% |
+| Math | LoRA | Full-seq (n1bs16) | 150 | avg@4 | 62.35% |
 | Math | LoRA | Random-100 | 150 | avg@4 | 63.05% |
 | Math | LoRA | TopEnt-Teacher-100 | 150 | avg@4 | 62.20% |
 | Math | LoRA | TopEnt-Student-100 | 100 | avg@4 | 61.35% |
@@ -85,7 +86,29 @@ Positional loss (training only on the first N response tokens) is effective acro
 | 150 | 65.10% | 70.00% | 80.60% |
 | 200 | 65.55% | 71.20% | 80.60% |
 
-Note: No full-seq LoRA experiment was run for the n1bs16 config.
+### Full-seq (n1, 3200 problems, max_new_tokens=2048, single-GPU HF generate)
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 61.00% | 66.80% | 74.60% |
+| 100 | 62.00% | 68.40% | 75.20% |
+| 150 | 62.35% | 69.40% | 74.60% |
+| 200 | 61.20% | 65.20% | 75.00% |
+
+Note: Unlike the n16bs16 full-seq experiment, this n1bs16 config does NOT show boxed repetition degradation. avg@4 is stable at 61-62%. However, it is still 3-4pp below the best positional variants (pos-50: 66.65%, pos-100: 65.85%).
+
+Checkpoint: `checkpoints/fullseq-n1bs16-single/` (on scai1)
+
+### Full-seq Funcall (n1, 3200 problems, same config)
+
+| Step | full_acc | name_acc | parse_rate |
+|------|----------|----------|------------|
+| 50 | 1.67% | 33.83% | 43.67% |
+| 100 | 7.17% | 32.00% | 40.83% |
+| 150 | 5.33% | 25.83% | 37.50% |
+| 200 | 7.67% | 26.00% | 37.67% |
+
+Note: Full-seq funcall is catastrophically bad (parse_rate ~40%, full_acc <8%) compared to pos-100 funcall (full_acc 61.30%). The model generates unparseable outputs for most function calling problems.
 
 ---
 

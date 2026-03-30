@@ -829,7 +829,7 @@ def main():
     parser.add_argument("--wandb_run_name", type=str, default=None)
     parser.add_argument("--student_gpu", type=int, default=0)
     parser.add_argument("--teacher_gpu", type=int, default=1)
-    parser.add_argument("--vllm_gpu", "--sglang_gpu", type=int, default=None,
+    parser.add_argument("--vllm_gpu", type=int, default=None,
                        help="GPU for vLLM/SGLang generation (default: same as student_gpu). "
                             "Set to a separate GPU to avoid model offloading.")
     
@@ -1339,13 +1339,26 @@ def main():
                         s_logits_shared = s_logits_selected[:, _msi_dev]
                         s_log_probs_shared = log_softmax(s_logits_shared.float(), dim=-1)
 
-                        # Reverse KL over shared vocab: KL(student_shared || teacher_shared)
-                        loss_traj = kl_div(
-                            t_log_probs_shared.to(student_device),
-                            s_log_probs_shared,
-                            log_target=True,
-                            reduction="batchmean",
-                        )
+                        # Compute loss over shared vocab
+                        t_lp_shared = t_log_probs_shared.to(student_device)
+                        if args.loss_type == "reverse_kl":
+                            loss_traj = kl_div(
+                                t_lp_shared, s_log_probs_shared,
+                                log_target=True, reduction="batchmean",
+                            )
+                        elif args.loss_type in ("dft_distill", "dft_distill_deadzone"):
+                            per_pos_kl = (torch.exp(t_lp_shared) * (t_lp_shared - s_log_probs_shared)).sum(dim=-1)
+                            _msi_local = mapped_student_ids.to(limited_labels.device)
+                            _lm_local = (limited_labels.unsqueeze(-1) == _msi_local.unsqueeze(0)).long().argmax(-1)
+                            _lm_local = _lm_local.clamp(max=s_log_probs_shared.shape[-1] - 1)
+                            s_prob_sampled = s_log_probs_shared.gather(-1, _lm_local.unsqueeze(-1)).squeeze(-1).exp().detach()
+                            if args.loss_type == "dft_distill_deadzone":
+                                with torch.no_grad():
+                                    mask = (per_pos_kl.detach() > 0.1).float()
+                                s_prob_sampled = s_prob_sampled * mask
+                            loss_traj = (per_pos_kl * s_prob_sampled).mean()
+                        else:
+                            raise ValueError(f"Unknown loss_type: {args.loss_type}")
                         # Clamp loss to reasonable range
                         loss_traj = loss_traj.clamp(max=50.0)
                         mb_loss = mb_loss + loss_traj / n_trajs
@@ -1359,19 +1372,40 @@ def main():
                             step_kl += (s_lps - t_lps).mean().item()
                             step_ce += (-s_lps).mean().item()
                     else:
-                        # Same-tokenizer: full-distribution reverse KL (standard path)
+                        # Same-tokenizer path
                         # Align vocab sizes if needed (e.g. padding differences)
                         if t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
                             min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
                             t_log_probs = t_log_probs[..., :min_vocab]
                             s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
 
-                        loss_traj = kl_div(
-                            t_log_probs.to(student_device),
-                            s_log_probs_resp,
-                            log_target=True,
-                            reduction="batchmean",
-                        )
+                        if args.loss_type == "reverse_kl":
+                            # Standard full-distribution reverse KL
+                            loss_traj = kl_div(
+                                t_log_probs.to(student_device),
+                                s_log_probs_resp,
+                                log_target=True,
+                                reduction="batchmean",
+                            )
+                        elif args.loss_type in ("dft_distill", "dft_distill_deadzone"):
+                            # DFT-style distillation: per-position KL weighted by
+                            # student probability of sampled token (normalizes gradient magnitude).
+                            # Inspired by DFT (Wu et al., ICLR 2026): loss *= p_student(y_t).detach()
+                            t_lp = t_log_probs.to(student_device)
+                            # Per-position KL: sum over vocab
+                            per_pos_kl = (torch.exp(t_lp) * (t_lp - s_log_probs_resp)).sum(dim=-1)  # [k]
+                            # Student probability of the sampled token at each position
+                            s_prob_sampled = s_log_probs_resp.gather(
+                                -1, limited_labels.unsqueeze(-1)).squeeze(-1).exp().detach()  # [k]
+                            if args.loss_type == "dft_distill_deadzone":
+                                # Deadzone: zero out gradient where teacher and student agree closely
+                                with torch.no_grad():
+                                    mask = (per_pos_kl.detach() > 0.1).float()
+                                s_prob_sampled = s_prob_sampled * mask
+                            # Weighted KL: high-prob tokens keep normal gradient, low-prob tokens dampened
+                            loss_traj = (per_pos_kl * s_prob_sampled).mean()
+                        else:
+                            raise ValueError(f"Unknown loss_type: {args.loss_type}")
                         mb_loss = mb_loss + loss_traj / n_trajs
 
                         with torch.no_grad():
