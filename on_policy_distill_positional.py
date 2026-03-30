@@ -855,8 +855,6 @@ def main():
                        help="Use vLLM subprocess for generation (faster but requires GPU offload)")
     parser.add_argument("--use_sglang", action="store_true",
                        help="Use persistent SGLang server for generation (fastest, no offload needed)")
-    parser.add_argument("--sglang_gpu", type=int, default=-1,
-                       help="GPU for SGLang server (-1 = same as student_gpu)")
     parser.add_argument("--vllm_gpu_util", type=float, default=0.90,
                        help="GPU memory utilization for vLLM/SGLang (default 0.90)")
     parser.add_argument("--full_finetune", action="store_true",
@@ -930,8 +928,18 @@ def main():
     valid_mask = None
     mapped_student_ids = None
     if tokenizer.get_vocab() != teacher_tokenizer.get_vocab():
-        print("  Different tokenizers detected — building vocab mapping for cross-tokenizer KL...")
-        vocab_mapping, valid_mask, mapped_student_ids = build_vocab_mapping(tokenizer, teacher_tokenizer)
+        # Check if vocabs are nearly identical (e.g. Qwen2 vs Qwen3)
+        s_vocab = tokenizer.get_vocab()
+        t_vocab = teacher_tokenizer.get_vocab()
+        same_id_count = sum(1 for k in t_vocab if k in s_vocab and t_vocab[k] == s_vocab[k])
+        overlap_ratio = same_id_count / max(len(s_vocab), len(t_vocab))
+        if overlap_ratio > 0.99:
+            print(f"  Near-identical tokenizers ({overlap_ratio:.1%} same-ID overlap) — using vocab truncation, no remap needed.")
+            vocab_mapping = None  # skip cross-tokenizer path
+            # will truncate to min vocab at loss computation
+        else:
+            print("  Different tokenizers detected — building vocab mapping for cross-tokenizer KL...")
+            vocab_mapping, valid_mask, mapped_student_ids = build_vocab_mapping(tokenizer, teacher_tokenizer)
     else:
         print("  Same tokenizer — no vocab mapping needed.")
 
@@ -1056,7 +1064,7 @@ def main():
                 torch.cuda.empty_cache()
 
             # 3. Start/manage SGLang server
-            _sgl_gpu = args.sglang_gpu if args.sglang_gpu >= 0 else args.student_gpu
+            _sgl_gpu = args.vllm_gpu if args.vllm_gpu is not None else args.student_gpu
             if single_gpu:
                 # Single-GPU: kill old server, start fresh each step to fully free GPU
                 stop_sglang_server()
@@ -1174,6 +1182,10 @@ def main():
         n_trajs_total += total_trajs
         print(f"Generated {total_trajs} trajectories for {len(chunk_problems)} problems ({gen_time:.0f}s)")
 
+        # Clean up after generation before scoring
+        gc.collect()
+        torch.cuda.empty_cache()
+
         # ---- Phase 2: Score all trajectories in this chunk with teacher ----
         # Single-GPU: swap student out (if on GPU), load teacher in
         if single_gpu:
@@ -1214,6 +1226,10 @@ def main():
 
         if len(all_chunk_trajs) == 0:
             continue
+
+        # Clean up after scoring before training
+        gc.collect()
+        torch.cuda.empty_cache()
 
         # ---- Phase 3: Train on all trajectories in this chunk (one optimizer step) ----
         # Single-GPU: swap teacher out, reload student for training
@@ -1275,68 +1291,111 @@ def main():
 
             try:
                 outputs = student(input_ids=input_ids, attention_mask=attn_mask, use_cache=False)
-                logits_mb = outputs.logits
+                logits_mb = outputs.logits  # [mb_size, max_len, vocab]
+                shift_logits = logits_mb[:, :-1, :]  # [mb_size, max_len-1, vocab]
+                shift_labels = input_ids[:, 1:]       # [mb_size, max_len-1]
 
-                mb_loss = torch.tensor(0.0, device=student_device)
+                # Determine max response length across mini-batch for padding
+                max_resp_len = max(mb_resp_lens)
+
+                # Pad teacher log-probs to same length and stack into batch
+                teacher_vocab_size = mb_teacher[0].shape[-1]
+                t_log_probs_padded = torch.full(
+                    (mb_size, max_resp_len, teacher_vocab_size),
+                    float('-inf'), device=student_device,
+                )
+                # Build a mask for valid response positions [mb_size, max_resp_len]
+                resp_valid_mask = torch.zeros(mb_size, max_resp_len, dtype=torch.bool, device=student_device)
                 for i in range(mb_size):
-                    shift_logits_i = logits_mb[i, :-1, :]
-                    shift_labels_i = input_ids[i, 1:]
+                    rlen = mb_resp_lens[i]
+                    t_lp = mb_teacher[i]
+                    actual_t_len = min(rlen, t_lp.shape[0])
+                    t_log_probs_padded[i, :actual_t_len] = t_lp[:actual_t_len].to(student_device)
+                    resp_valid_mask[i, :rlen] = True
+
+                # Extract student logits at response positions into [mb_size, max_resp_len, vocab]
+                student_vocab_size = shift_logits.shape[-1]
+                s_logits_resp = torch.zeros(
+                    mb_size, max_resp_len, student_vocab_size,
+                    device=student_device, dtype=shift_logits.dtype,
+                )
+                labels_resp = torch.zeros(
+                    mb_size, max_resp_len, device=student_device, dtype=torch.long,
+                )
+                for i in range(mb_size):
                     start = mb_resp_starts[i] - 1
-                    resp_len = mb_resp_lens[i]
-                    k = mb_distill_counts[i]
+                    rlen = mb_resp_lens[i]
+                    s_logits_resp[i, :rlen] = shift_logits[i, start:start+rlen]
+                    labels_resp[i, :rlen] = shift_labels[i, start:start+rlen]
 
-                    t_log_probs_all = mb_teacher[i].to(student_device)
-                    s_log_probs_all = log_softmax(shift_logits_i[start:start+resp_len].float(), dim=-1)
-                    labels_all = shift_labels_i[start:start+resp_len]
+                s_log_probs_resp = log_softmax(s_logits_resp.float(), dim=-1)  # [mb_size, max_resp_len, vocab]
 
-                    # Choose token positions to distill.
-                    if args.token_select_mode == "prefix":
-                        sel_idx = torch.arange(k, device=student_device, dtype=torch.long)
-                    elif args.token_select_mode == "top_kl":
-                        with torch.no_grad():
-                            kl_per_pos = (torch.exp(t_log_probs_all) * (t_log_probs_all - s_log_probs_all.detach())).sum(dim=-1)
-                            sel_idx = torch.topk(kl_per_pos, k=k, largest=True).indices
-                    elif args.token_select_mode == "top_entropy_student":
-                        with torch.no_grad():
-                            ps = torch.exp(s_log_probs_all.detach())
-                            ent_per_pos = -(ps * s_log_probs_all.detach()).sum(dim=-1)
-                            sel_idx = torch.topk(ent_per_pos, k=k, largest=True).indices
-                    elif args.token_select_mode == "top_entropy_teacher":
-                        with torch.no_grad():
-                            pt = torch.exp(t_log_probs_all)
-                            ent_per_pos = -(pt * t_log_probs_all).sum(dim=-1)
-                            sel_idx = torch.topk(ent_per_pos, k=k, largest=True).indices
-                    elif args.token_select_mode == "random":
-                        perm = torch.randperm(resp_len, device=student_device)
-                        sel_idx = perm[:k]
-                    else:
-                        raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
+                # Build selection mask [mb_size, max_resp_len] for which positions to distill
+                sel_mask = torch.zeros(mb_size, max_resp_len, dtype=torch.bool, device=student_device)
 
-                    sel_idx, _ = torch.sort(sel_idx)
-                    s_log_probs_resp = s_log_probs_all.index_select(0, sel_idx)
-                    t_log_probs = t_log_probs_all.index_select(0, sel_idx)
-                    limited_labels = labels_all.index_select(0, sel_idx)
-                    step_tokens += k
+                if args.token_select_mode == "prefix":
+                    # Select first k positions per trajectory
+                    for i in range(mb_size):
+                        k = mb_distill_counts[i]
+                        sel_mask[i, :k] = True
+                elif args.token_select_mode == "top_kl":
+                    with torch.no_grad():
+                        kl_per_pos = (torch.exp(t_log_probs_padded) * (t_log_probs_padded - s_log_probs_resp.detach())).sum(dim=-1)
+                        kl_per_pos[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(kl_per_pos[i, :mb_resp_lens[i]], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "top_entropy_student":
+                    with torch.no_grad():
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        ent_per_pos = -(ps * s_log_probs_resp.detach()).sum(dim=-1)
+                        ent_per_pos[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(ent_per_pos[i, :mb_resp_lens[i]], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "top_entropy_teacher":
+                    with torch.no_grad():
+                        pt = torch.exp(t_log_probs_padded)
+                        ent_per_pos = -(pt * t_log_probs_padded).sum(dim=-1)
+                        ent_per_pos[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(ent_per_pos[i, :mb_resp_lens[i]], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "random":
+                    for i in range(mb_size):
+                        k = mb_distill_counts[i]
+                        rlen = mb_resp_lens[i]
+                        perm = torch.randperm(rlen, device=student_device)[:k]
+                        sel_mask[i].scatter_(0, perm, True)
+                else:
+                    raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
 
+                # Count selected tokens
+                n_selected = sel_mask.sum().item()
+                step_tokens += int(n_selected)
+
+                if vocab_mapping is not None:
                     # Cross-tokenizer: reverse KL over shared vocabulary
-                    # Teacher log-probs are already correctly computed via re-tokenization.
-                    # Remap from teacher vocab → student vocab, slice to shared tokens only.
-                    if vocab_mapping is not None:
-                        # Remap teacher logprobs to shared vocab (renormalized)
+                    # Process per-trajectory since remap_teacher_logprobs works per-trajectory
+                    mb_loss = torch.tensor(0.0, device=student_device)
+                    for i in range(mb_size):
+                        sel_idx_i = sel_mask[i].nonzero(as_tuple=True)[0]
+                        if len(sel_idx_i) == 0:
+                            continue
+                        t_lp_sel = t_log_probs_padded[i].index_select(0, sel_idx_i)
                         t_log_probs_shared = remap_teacher_logprobs(
-                            t_log_probs, vocab_mapping, valid_mask,
-                            s_log_probs_resp.shape[-1], mapped_student_ids)
-                        # Clamp to prevent -inf/NaN that can trigger CUDA asserts
+                            t_lp_sel, vocab_mapping, valid_mask,
+                            student_vocab_size, mapped_student_ids)
                         t_log_probs_shared = torch.nan_to_num(t_log_probs_shared, nan=-20.0, posinf=0.0, neginf=-20.0)
                         t_log_probs_shared = t_log_probs_shared.clamp(min=-20.0, max=0.0)
 
-                        # Slice student RAW LOGITS to shared vocab, then log_softmax
-                        _msi_dev = mapped_student_ids.to(shift_logits_i.device)
-                        # Bounds check: clamp indices to valid range
-                        _msi_dev = _msi_dev.clamp(max=shift_logits_i.shape[-1] - 1)
-                        # Use sel_idx to pick the correct positions (not just first k)
-                        s_logits_selected = shift_logits_i[start:start+resp_len].index_select(0, sel_idx)
-                        s_logits_shared = s_logits_selected[:, _msi_dev]
+                        _msi_dev = mapped_student_ids.to(student_device)
+                        _msi_dev = _msi_dev.clamp(max=student_vocab_size - 1)
+                        s_logits_sel = s_logits_resp[i].index_select(0, sel_idx_i)
+                        s_logits_shared = s_logits_sel[:, _msi_dev]
                         s_log_probs_shared = log_softmax(s_logits_shared.float(), dim=-1)
 
                         # Compute loss over shared vocab
@@ -1364,8 +1423,9 @@ def main():
                         mb_loss = mb_loss + loss_traj / n_trajs
 
                         with torch.no_grad():
-                            _msi = mapped_student_ids.to(limited_labels.device)
-                            _lm = (limited_labels.unsqueeze(-1) == _msi.unsqueeze(0)).long().argmax(-1)
+                            limited_labels_i = labels_resp[i].index_select(0, sel_idx_i)
+                            _msi = mapped_student_ids.to(limited_labels_i.device)
+                            _lm = (limited_labels_i.unsqueeze(-1) == _msi.unsqueeze(0)).long().argmax(-1)
                             _lm = _lm.clamp(max=s_log_probs_shared.shape[-1] - 1)
                             s_lps = s_log_probs_shared.gather(-1, _lm.unsqueeze(-1)).squeeze(-1)
                             t_lps = t_log_probs_shared.to(student_device).gather(-1, _lm.unsqueeze(-1)).squeeze(-1)
