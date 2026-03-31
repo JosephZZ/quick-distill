@@ -94,142 +94,79 @@ This creates a \emph{phase shift} in the teacher's role along the trajectory. At
 \subsection{Per-Position KL Distribution}
 \label{sec:kl_distribution}
 
-To investigate the distillation signal, we generate 59,936 on-policy trajectories (mean length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. Positions are 0-indexed throughout (position 0 is the first generated token). Figure~\ref{fig:analysis} presents a unified view of our analysis.
+To investigate the distillation signal, we generate 59,936 on-policy trajectories (mean length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. Positions are 0-indexed throughout (position 0 is the first generated token).
 
+% ---- Figure Group 1: Signal Distribution ----
 \begin{figure*}[t]
     \centering
-    \begin{subfigure}[b]{0.32\textwidth}
+    \begin{subfigure}[b]{0.48\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/fig1a_kl_curve.pdf}
-        \caption{Per-position KL divergence.}
+        \includegraphics[width=\textwidth]{figures/fig_analysis_1_signal.pdf}
     \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.32\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{figures/fig_continuation.pdf}
-        \caption{Prefix continuation (test-time).}
-    \end{subfigure}
-    \hfill
-    \begin{subfigure}[b]{0.32\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{figures/fig2_stability.pdf}
-        \caption{Training on different positions.}
-    \end{subfigure}
-    \caption{\textbf{Token reward quality analysis.} (a) KL divergence between teacher and student decays steeply from position 0 (KL = 3.06) to a plateau around 0.4 after position 100, showing that the distillation signal is concentrated in early positions. (b) Prefix continuation experiment: when the teacher continues from a student prefix, performance degrades from 62.7\% (100-token prefix) to 51.8\% (300-token prefix), showing that early tokens determine the trajectory. (c) Full-sequence distillation degrades over training (coding: 40\% $\rightarrow$ 27\%), while our positional method remains stable---consistent with low-quality later-position signals accumulating harm over time.}
-    \label{fig:analysis}
+    \caption{\textbf{Signal distribution by position.} (a) KL divergence decays steeply from 3.06 at position 0 to a plateau of $\sim$0.4 after position 100. The first 100 tokens contain 43.9\% of total KL. (b) Teacher entropy drops from 1.07 to 0.14 while teacher-student agreement rises from 58\% to 87\%. At later positions, the teacher is effectively rubber-stamping the student's choices.}
+    \label{fig:signal}
 \end{figure*}
 
-Table~\ref{tab:kl_phases} summarizes the KL distribution by position phase. Position 0 (KL = 3.057) is 8.5$\times$ higher than position 192 (KL = 0.359). The ultra-early phase (positions 0--4) averages 1.714, while the late phase (150--199) averages only 0.383. The decay is rapid in the first 5 positions (3.057 $\rightarrow$ 0.921), then gradual, stabilizing into a long tail after position $\sim$100.
+Figure~\ref{fig:signal} shows two complementary views of the signal distribution. The KL divergence (left) reveals that the distillation signal is massively front-loaded: position 0 (KL = 3.06) is 8.5$\times$ higher than position 192 (KL = 0.36). The teacher confidence analysis (right) explains why: at early positions, the teacher's distribution is spread across multiple plausible continuations (entropy 1.07), reflecting genuine uncertainty about reasoning strategy. At later positions, the teacher is nearly deterministic (entropy 0.14) and agrees with the student on 87\% of tokens---it is no longer providing independent guidance, but merely confirming the student's choices.
 
-\begin{table}[t]
+This is a direct consequence of the conditional scoring problem (\S\ref{sec:conditional}): once the student's prefix determines the reasoning approach, the teacher's conditional distribution collapses to near-agreement. The residual disagreement at late positions is dominated by formatting conventions (LaTeX delimiters, code patterns) rather than reasoning content.
+
+\paragraph{Strategy vs.\ execution.} Token-type analysis (Appendix~\ref{app:token_classification}) reveals that early high-KL tokens are predominantly \emph{planning} tokens (``To'', ``First'', ``Let'')---reflecting strategy disagreement---while late high-KL tokens are formatting conventions. Figure~\ref{fig:example_cont} (left) illustrates this with a concrete example: the first 100 tokens establish the solution approach, while the last 100 tokens execute the computation.
+
+% ---- Figure Group 2: Example + Continuation ----
+\begin{figure*}[t]
 \centering
-\caption{\textbf{KL divergence by position phase.} Mean KL over 59,936 trajectories.}
-\label{tab:kl_phases}
-\small
-\begin{tabular}{llcc}
-\toprule
-\textbf{Phase} & \textbf{Position range} & \textbf{Mean KL} & \textbf{Description} \\
-\midrule
-Ultra-early & 0--4 & 1.714 & Strategy decision \\
-Early & 5--19 & 0.934 & Rapid decline \\
-Mid-early & 20--49 & 0.896 & Gradual decline \\
-Mid & 50--99 & 0.525 & Stable, low \\
-Mid-late & 100--149 & 0.449 & Continued decline \\
-Late & 150--199 & 0.383 & Converged \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Cumulatively, the first 50 tokens contain 26.2\% of total per-trajectory KL, the first 100 tokens contain 43.9\%, and the first 200 tokens contain 66.1\%. The remaining positions---often hundreds of tokens---contribute only a diffuse, low-amplitude signal.
-
-
-\subsection{Teacher Confidence and Agreement}
-\label{sec:teacher_confidence}
-
-The KL analysis shows \emph{where} the signal concentrates, but not \emph{why}. To understand the mechanism, we compute the teacher's full output distribution at each position via a forward pass on student-generated trajectories, measuring teacher entropy and teacher-student agreement.
-
-\begin{table}[t]
-\centering
-\caption{\textbf{Teacher confidence and agreement by position.} Entropy: teacher's output distribution entropy (nats). Top-1: teacher's maximum token probability. Agreement: fraction of tokens where $|\log p_\text{teacher}(y_t) - \log p_\text{student}(y_t)| < 0.1$.}
-\label{tab:teacher_confidence}
-\small
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Position range} & \textbf{Teacher entropy} & \textbf{Teacher top-1} & \textbf{Agreement rate} & \textbf{Mean teacher LP} \\
-\midrule
-0--50 & 1.069 & 0.724 & 58.4\% & $-$2.005 \\
-50--100 & 0.430 & 0.864 & 70.7\% & $-$0.824 \\
-100--200 & 0.248 & 0.919 & 80.1\% & $-$0.401 \\
-200--400 & 0.196 & 0.935 & 83.2\% & $-$0.326 \\
-400--800 & 0.145 & 0.950 & 87.0\% & $-$0.277 \\
-\bottomrule
-\end{tabular}
-\end{table}
-
-Table~\ref{tab:teacher_confidence} reveals that teacher signal quality degrades monotonically with position. At early positions (0--50), the teacher's distribution is spread across multiple plausible continuations (entropy 1.07, top-1 probability 72\%), reflecting genuine uncertainty about reasoning strategy---this is the regime where the teacher has an independent opinion to transmit. At later positions (400--800), the teacher is nearly deterministic (entropy 0.14, top-1 probability 95\%) and agrees with the student on 87\% of tokens. The teacher is no longer providing an independent assessment; it is simply confirming what the student already chose.
-
-This pattern is a direct consequence of the conditional scoring problem (\S\ref{sec:conditional}): once the student's prefix has determined the reasoning approach, the space of plausible continuations narrows, and the teacher's conditional distribution collapses to near-agreement with the student. The residual disagreement at late positions (13\% of tokens) is dominated by formatting conventions (LaTeX delimiters, code patterns) rather than reasoning content, as we show next.
-
-
-\paragraph{What drives the KL concentration?} Token-type analysis (Appendix~\ref{app:token_classification}) reveals that early-position high-KL tokens are predominantly \emph{planning} tokens (``To'', ``First'', ``Let'')---reflecting strategy disagreement---while late-position high-KL tokens are dominated by formatting conventions (LaTeX delimiters, code patterns). The teacher and student disagree most on \emph{how to structure reasoning}, not on \emph{what to compute}.
-
-Figure~\ref{fig:example} illustrates this with a concrete example. The student's first 100 tokens establish the solution strategy---listing conversion formulas, identifying the quadrant---while the remaining tokens execute the computation by substituting values and simplifying. This pattern is typical: early tokens encode \emph{what approach to use}, and later tokens encode \emph{how to carry it out}.
-
-\begin{figure}[t]
-\centering
+\begin{minipage}[t]{0.52\textwidth}
 \small
 \fbox{\parbox{0.95\textwidth}{
-\textbf{Problem:} In a certain isosceles right triangle, the altitude to the hypotenuse has length $4\sqrt{2}$. What is the area of the triangle? \\[4pt]
-\colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's start by understanding the problem. In an isosceles right triangle, the two legs are of equal length, and the hypotenuse is $\sqrt{2}$ times the length of a leg. If we denote the length of each leg by $a$, then the hypotenuse will be $a\sqrt{2}$. The altitude to the hypotenuse in an isosceles right triangle is half the length of a leg, because the altitude bisects the...''}} \\[4pt]
-\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Last 100 tokens (execution):} ``...Solving for $a$, we get: $a\sqrt{2} = 8\sqrt{2} \implies a = 8$. So, the length of each leg of the triangle is 8. The area of the triangle is given by: Area $= \frac{1}{2} \times \text{base} \times \text{height} = \frac{1}{2} \times 8 \times 8 = \boxed{32}$''}}
+\textbf{Problem:} In an isosceles right triangle, the altitude to the hypotenuse has length $4\sqrt{2}$. What is the area? \\[3pt]
+\colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's start by understanding the problem. In an isosceles right triangle, the two legs are equal, and the hypotenuse is $\sqrt{2}$ times the leg. If we denote each leg by $a$, then hypotenuse $= a\sqrt{2}$. The altitude to the hypotenuse is half the leg, because the altitude bisects the...''}} \\[3pt]
+\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Last 100 tokens (execution):} ``...Solving: $a\sqrt{2} = 8\sqrt{2} \implies a = 8$. The area is $\frac{1}{2} \times 8 \times 8 = \boxed{32}$''}}
 }}
-\caption{\textbf{Strategy vs.\ execution in a student response.} The first 100 tokens (blue) establish the solution approach---defining variables, identifying geometric relationships, choosing a formula. The last 100 tokens (orange) execute the computation---solving the equation and computing the final answer. The teacher and student disagree most on the strategy portion (mean KL $\approx$ 1.7) and largely agree on execution (mean KL $\approx$ 0.4).}
-\label{fig:example}
-\end{figure}
+\end{minipage}%
+\hfill
+\begin{minipage}[t]{0.45\textwidth}
+\centering
+\includegraphics[width=\textwidth]{figures/fig_continuation.pdf}
+\end{minipage}
+\caption{\textbf{Early tokens encode strategy; early tokens determine the trajectory.} \emph{Left:} A student response where the first 100 tokens (blue) establish the approach (define variables, identify relationships), while the last 100 tokens (orange) execute the computation. \emph{Right:} Prefix continuation on MATH-500. When the teacher continues from a 100-token student prefix, it achieves 62.7\% (near its 65.3\% baseline). At 300 tokens, performance falls to 51.8\% (student baseline)---the teacher cannot recover once the student's reasoning is entrenched.}
+\label{fig:example_cont}
+\end{figure*}
 
-
-\subsection{Prefix Continuation: Early Tokens Determine the Trajectory}
+\subsection{Test-Time Validation: Prefix Continuation}
 \label{sec:continuation}
 
-To directly test whether early tokens determine the quality of the full response, we evaluate prefix continuation on MATH-500: given a prefix of $L$ tokens from one model, the other model generates the continuation (Figure~\ref{fig:analysis}b).
-
-With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its own baseline of 65.30\%. At 200 tokens, performance drops to 56.30\%; at 300 tokens, it falls to 51.75\% (the student baseline). The student's reasoning choices become entrenched and the teacher cannot recover. Conversely, with a 100-token teacher prefix, the student achieves only 47.00\%---\emph{below} its own baseline---due to style mismatch between the models.
-
-This reveals that performance is dominated by the continuation model, not the prefix. A strong continuator (teacher) can partially recover from a weak prefix---but only if the prefix is short. The rapid degradation from 62.70\% to 51.75\% quantifies the \emph{window of effective influence}: the first $\sim$100 tokens are where reasoning strategy is still malleable.
+Figure~\ref{fig:example_cont} (right) directly tests whether early tokens determine response quality. With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its baseline. At 300 tokens, performance falls to 51.75\%: the student's choices become entrenched. Conversely, with a teacher prefix, the student achieves only 47.00\%---\emph{below} its baseline---due to style mismatch. Performance is dominated by the continuation model, not the prefix. The rapid degradation quantifies the \emph{window of effective influence}: the first $\sim$100 tokens are where reasoning strategy is still malleable.
 
 
-\subsection{Training on Different Positions}
+% ---- Figure Group 3: Training on Different Positions ----
+\subsection{Training-Time Validation: Position Region Ablation}
 \label{sec:position_ablation}
 
-The analysis above predicts that early-position training should be most effective and later-position training should be harmful. We test this directly by training on different 100-token regions of the trajectory.
+The analysis above predicts that early-position training should be most effective and later-position training should be harmful. We test this by training on different 100-token regions (Figure~\ref{fig:positions}).
 
-\begin{table}[t]
-\centering
-\caption{\textbf{Position region ablation.} Each method selects exactly 100 tokens for distillation. LoRA, $n{=}1$, 3,200 problems. Baseline (no distillation): 50.95\% / 61.20\% / 72.80\%.}
-\label{tab:position_region}
-\small
-\begin{tabular}{lcccl}
-\toprule
-\textbf{Method} & \textbf{avg@4} & \textbf{maj@4} & \textbf{pass@4} & \textbf{vs.\ baseline} \\
-\midrule
-First 100 (prefix) & \textbf{65.85\%} & \textbf{70.80\%} & \textbf{79.80\%} & +14.9pp \\
-Random 100 & 63.05\% & 69.20\% & 76.80\% & +12.1pp \\
-Full-seq (all tokens) & 62.35\% & 69.40\% & 74.60\% & +11.4pp \\
-\midrule
-\textit{Baseline (no distill)} & \textit{50.95\%} & \textit{61.20\%} & \textit{72.80\%} & --- \\
-\midrule
-Last 100 (tail) & 50.35\% & 61.60\% & 71.00\% & $-$0.6pp \\
-Middle 100 (center) & 47.80\% & 58.60\% & 69.40\% & $-$3.2pp \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.7\textwidth]{figures/fig_analysis_3_positions.pdf}
+    \caption{\textbf{Training on different position regions} (each uses exactly 100 tokens). First-100 yields +14.9pp, while middle-100 and last-100 \emph{hurt} performance below the undistilled baseline (dashed line). Full-sequence training underperforms first-100 because it includes harmful later-position signals.}
+    \label{fig:positions}
+\end{figure}
 
-Table~\ref{tab:position_region} confirms the prediction. First-100 improves avg@4 by +14.9pp and outperforms full-sequence training, which includes all tokens. Strikingly, middle-100 and last-100 both perform \emph{below the undistilled baseline}---later-position signals are not merely low-quality, they are actively harmful. Random-100 (63.05\%) outperforms full-seq (62.35\%), further confirming that including later-position tokens in the loss is a net negative. Note that full-sequence training uses all tokens including the valuable early ones, yet still underperforms first-100---the harmful later-position signals partially negate the benefit of early-position signals.
+First-100 improves avg@4 by +14.9pp and outperforms full-sequence training. Middle-100 and last-100 both perform \emph{below the undistilled baseline}---later-position signals are not merely uninformative, they are actively harmful. Random-100 (63.05\%) outperforms full-seq (62.35\%), further confirming that including later-position tokens is a net negative.
 
+
+% ---- Figure Group 4: Degradation ----
 \subsection{Training Instability as a Consequence}
 \label{sec:degradation}
 
-The signal quality analysis explains a widely observed but poorly understood phenomenon: full-sequence on-policy distillation often degrades with continued training. On coding tasks (HumanEval), full-sequence distillation with LoRA peaks at 40.24\% at step 50 then drops to 26.83\% by step 400---a 33\% relative decline. On MATH-500, full-sequence distillation plateaus at 62.35\% avg@4 while positional distillation reaches 66.65\%. These degradation patterns are consistent with accumulated exposure to low-quality later-position signals. Positional distillation eliminates this degradation by never computing loss on these positions (Section~\ref{sec:stability}).
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.85\textwidth]{figures/fig_analysis_4_degradation.pdf}
+    \caption{\textbf{Full-sequence distillation degrades over training.} (a) On MATH-500, positional variants are stable while full-seq plateaus lower. (b) On HumanEval, full-seq drops from 40.2\% to 26.8\% ($-$33\%), while positional methods maintain or improve. The degradation is consistent with accumulated exposure to harmful later-position signals.}
+    \label{fig:degradation}
+\end{figure*}
+
+Figure~\ref{fig:degradation} shows that full-sequence distillation degrades with continued training, especially on coding (HumanEval drops 33\%), while positional distillation remains stable. This is a direct consequence of the signal quality analysis: over many training steps, noisy gradients from later positions accumulate and distort the student's parameters.
 
 \subsection{Summary of Findings}
 \label{sec:hypothesis}
@@ -293,7 +230,7 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \midrule
 --- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- \\
 \midrule
-\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & 7.67 & ${\sim}$280 \\
+\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & --- & ${\sim}$280 \\
  & \textbf{Ours ($N{=}100$)} & \textbf{65.85} & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
 \midrule
 \multirow{2}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
@@ -316,7 +253,7 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \subsection{Training Stability}
 \label{sec:stability}
 
-As shown in Figure~\ref{fig:analysis}c, full-sequence distillation degrades on coding tasks: HumanEval drops from 40.24\% to 26.83\% (a 33\% relative decline), while MATH-500 develops catastrophic \bboxed{} repetition. In contrast, \method{} maintains stable or improving accuracy across all checkpoints and tasks. The range between best and worst steps for \method{} is typically 1--3 percentage points, compared to 13--22 points for full-sequence. This is a direct consequence of the signal quality analysis (Section~\ref{sec:analysis}): restricting loss to high-quality early positions avoids the harmful later-position signals that accumulate over training.
+As shown in Figure~\ref{fig:degradation} and discussed in Section~\ref{sec:degradation}, full-sequence distillation degrades over training while \method{} remains stable. This is one of the three key advantages of positional distillation: better performance, no degradation, and dramatically faster training.
 
 
 \subsection{Efficiency}
