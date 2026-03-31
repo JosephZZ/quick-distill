@@ -315,6 +315,39 @@ The results reveal a robust sweet spot at $N = 50$--$200$, where performance sat
 
 \paragraph{Value clipping is not a substitute for positional truncation.} An alternative to positional truncation is to clip per-token KL contributions to a maximum value, reducing the influence of extreme outliers at all positions. We test full-trajectory training with KL clipped to 2.0. This achieves only 48.80\% avg@4---below the undistilled baseline (50.95\%) and far below positional distillation (65.85\%). Clipping indiscriminately removes high-KL signal from early positions (strategy selection tokens with KL $\gg$ 2) along with late-position noise. Positional truncation is strictly more effective because it preserves all signal at early positions while removing all signal at late positions.
 
+
+\subsection{Token Selection Strategy Comparison}
+\label{sec:token_selection}
+
+A natural alternative to positional selection is \emph{information-theoretic} selection: choose the $k$ tokens with the highest KL divergence or entropy, regardless of position. We compare four selection strategies, each selecting exactly 100 tokens from full-length student generations:
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Token selection strategies} ($k{=}100$). All use full-length generation (max 2048 tokens) then select 100 tokens for loss. Baseline: 50.95\%.}
+\label{tab:token_select}
+\small
+\begin{tabular}{lccc}
+\toprule
+\textbf{Selection strategy} & \textbf{KL coverage} & \textbf{Best avg@4} & \textbf{Mean position} \\
+\midrule
+\textbf{Prefix (first 100)} & 43.9\% & \textbf{65.85\%} & 50 \\
+Random 100 & $\sim$13\% & 63.05\% & $\sim$375 \\
+Top-Entropy-Teacher & $\sim$96\% & 62.20\% & $\sim$280 \\
+Top-Entropy-Student & $\sim$93\% & 61.35\% & $\sim$240 \\
+Full-seq (all tokens) & 100\% & 62.35\% & --- \\
+Top-KL 100 & 96\% & 58.60\% & $\sim$313 \\
+\midrule
+\textit{Baseline (no distill)} & --- & \textit{50.95\%} & --- \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:token_select} reveals a striking pattern: \textbf{the strategies that capture the most KL signal perform worst.} Top-KL-100 captures 96\% of total KL yet achieves only 58.60\%---the worst of all methods. Top-entropy strategies (selecting where teacher or student is most uncertain) also underperform prefix and random selection. Moreover, top-KL degrades sharply from 58.60\% (step 50) to 45.70\% (step 100), the most extreme degradation in any configuration.
+
+The key difference is \emph{position}: high-KL and high-entropy tokens are concentrated at later positions (mean position 240--313), while prefix tokens are at positions 0--99. Our signal quality analysis explains why: later-position tokens have lower teacher reliability (the teacher is conditioned on the student's prefix) and lower student leverage (changes don't cascade forward). Random-100, despite no signal-based selection, outperforms all ``smart'' strategies except prefix---simply because it statistically avoids the harmful later-position concentration.
+
+This confirms that \textbf{position is the most important criterion for token selection in on-policy distillation}---more important than KL magnitude, teacher entropy, or student entropy.
+
 \subsection{Cascade Effect}
 \label{sec:cascade}
 
