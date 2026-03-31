@@ -181,9 +181,9 @@ Figure~\ref{fig:example} illustrates this with a concrete example. The student's
 \fbox{\parbox{0.95\textwidth}{
 \textbf{Problem:} Convert $(0,3)$ from rectangular to polar coordinates. \\[4pt]
 \colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's solve the problem step-by-step. \textbf{1. Understand the Conversion Formulae:} The radius $r$ in polar coordinates is given by $r = \sqrt{x^2+y^2}$. The angle $\theta$ is given by $\theta = \arctan(y/x)$, but we need to adjust for the correct quadrant. \textbf{2. Identify}...''}} \\[4pt]
-\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Remaining tokens (execution):} ``...the Rectangular Coordinates: The given point is $(0,3)$. \textbf{3. Calculate $r$:} $r = \sqrt{0^2+3^2} = \sqrt{9} = 3$. \textbf{4. Determine $\theta$:} Since $x=0$ and $y=3$, the point lies on the positive y-axis. $\theta = \pi/2$.''}}
+\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Tokens 101+ (execution):} ``...the Rectangular Coordinates: The given point is $(0,3)$. \textbf{3. Calculate $r$:} $r = \sqrt{0^2+3^2} = \sqrt{9} = 3$. \textbf{4. Determine $\theta$:} Since $x=0$ and $y=3$, the point lies on the positive y-axis. $\theta = \pi/2$.''}}
 }}
-\caption{\textbf{Strategy vs.\ execution in a student response.} The first $\sim$100 tokens (blue) establish the solution approach---which formulas to use, what to check. The remaining tokens (orange) execute the computation. Distillation on the strategy portion is sufficient because the student can already compute once it knows the approach.}
+\caption{\textbf{Strategy vs.\ execution in a student response.} The first $\sim$100 tokens (blue) establish the solution approach---which formulas to use, what to check. Tokens 101 onward (orange) execute the computation by substituting values and simplifying. Distillation on the strategy portion is sufficient because the student can already compute once it knows the approach.}
 \label{fig:example}
 \end{figure}
 
@@ -208,8 +208,8 @@ Full-seq (all tokens) & 62.35\% & 69.40\% & 74.60\% & +11.4pp \\
 \midrule
 \textit{Baseline (no distill)} & \textit{50.95\%} & \textit{61.20\%} & \textit{72.80\%} & --- \\
 \midrule
-Last 100 (tail) & 49.70\% & 58.40\% & 69.60\% & $-$1.3pp \\
-Middle 100 (center) & 46.85\% & 56.60\% & 68.40\% & $-$4.1pp \\
+Last 100 (tail) & 50.35\% & 61.60\% & 71.00\% & $-$0.6pp \\
+Middle 100 (center) & 47.80\% & 58.60\% & 69.40\% & $-$3.2pp \\
 \bottomrule
 \end{tabular}
 \end{table}
@@ -296,10 +296,12 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \midrule
 --- & Baseline & 13.45 & 23.78 & 40.48 & 73.50 & --- \\
 \midrule
-gemma-3-4b-it & \textbf{Ours ($N{=}100$)} & \textbf{27.20} & \textbf{31.10} & \textbf{50.53} & \textbf{82.50} & ${\sim}$8 \\
+\multirow{2}{*}{gemma-3-4b-it} & Full-seq & 11.70$^\S$ & --- & --- & --- & ${\sim}$210 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{27.20} & \textbf{31.10} & \textbf{50.53} & \textbf{82.50} & ${\sim}$8 \\
 \bottomrule
 \multicolumn{7}{l}{\footnotesize $^\dagger$ Step 50 only; later steps not evaluated.} \\
-\multicolumn{7}{l}{\footnotesize $^\ddagger$ Full-seq with 8B teacher frequently OOMs on 48GB GPU.}
+\multicolumn{7}{l}{\footnotesize $^\ddagger$ Full-seq with 8B teacher frequently OOMs on 48GB GPU.} \\
+\multicolumn{7}{l}{\footnotesize $^\S$ Gemma full-seq degrades below baseline; other tasks not evaluated.}
 \end{tabular}
 \end{table}
 
