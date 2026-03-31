@@ -1,0 +1,264 @@
+\begin{thebibliography}{38}
+\providecommand{\natexlab}[1]{#1}
+\providecommand{\url}[1]{\texttt{#1}}
+\expandafter\ifx\csname urlstyle\endcsname\relax
+  \providecommand{\doi}[1]{doi: #1}\else
+  \providecommand{\doi}{doi: \begingroup \urlstyle{rm}\Url}\fi
+
+\bibitem[Agarwal et~al.(2024)Agarwal, Vieillard, Zhou, Stanczyk, Ramos, Geist,
+  and Bachem]{agarwal2024onpolicy}
+Rishabh Agarwal, Nino Vieillard, Yongchao Zhou, Piotr Stanczyk, Sabela Ramos,
+  Matthieu Geist, and Olivier Bachem.
+\newblock On-policy distillation of language models: Learning from
+  self-generated mistakes.
+\newblock In \emph{International Conference on Learning Representations}, 2024.
+
+\bibitem[Austin et~al.(2021)Austin, Odena, Nye, Bosma, Michalewski, Dohan,
+  Jiang, Cai, Terry, Le, et~al.]{austin2021program}
+Jacob Austin, Augustus Odena, Maxwell Nye, Maarten Bosma, Henryk Michalewski,
+  David Dohan, Ellen Jiang, Carrie Cai, Michael Terry, Quoc Le, et~al.
+\newblock Program synthesis with large language models.
+\newblock \emph{arXiv preprint arXiv:2108.07732}, 2021.
+
+\bibitem[Bengio et~al.(2015)Bengio, Vinyals, Jaitly, and
+  Shazeer]{bengio2015scheduled}
+Samy Bengio, Oriol Vinyals, Navdeep Jaitly, and Noam Shazeer.
+\newblock Scheduled sampling for sequence prediction with recurrent neural
+  networks.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2015.
+
+\bibitem[Bengio et~al.(2009)Bengio, Louradour, Collobert, and
+  Weston]{bengio2009curriculum}
+Yoshua Bengio, J{\'e}r{\^o}me Louradour, Ronan Collobert, and Jason Weston.
+\newblock Curriculum learning.
+\newblock In \emph{Proceedings of the 26th Annual International Conference on
+  Machine Learning}, pages 41--48, 2009.
+
+\bibitem[Chen et~al.(2021)Chen, Tworek, Jun, Yuan, Pinto, Kaplan, Edwards,
+  Burda, Joseph, Brockman, et~al.]{chen2021evaluating}
+Mark Chen, Jerry Tworek, Heewoo Jun, Qiming Yuan, Henrique Ponde de~Oliveira
+  Pinto, Jared Kaplan, Harri Edwards, Yuri Burda, Nicholas Joseph, Greg
+  Brockman, et~al.
+\newblock Evaluating large language models trained on code.
+\newblock \emph{arXiv preprint arXiv:2107.03374}, 2021.
+
+\bibitem[Chen et~al.(2025)Chen, Kothapalli, Fatahibaarzi, Sang, Tang, Song,
+  Wang, and Abdul-Mageed]{chen2025distillingessence}
+Wei-Rui Chen, Vignesh Kothapalli, Ata Fatahibaarzi, Hejian Sang, Shao Tang,
+  Qingquan Song, Zhipeng Wang, and Muhammad Abdul-Mageed.
+\newblock Distilling the essence: Efficient reasoning distillation via sequence
+  truncation.
+\newblock \emph{arXiv preprint arXiv:2512.21002}, 2025.
+
+\bibitem[{DeepSeek-AI}(2025)]{deepseekr1}
+{DeepSeek-AI}.
+\newblock {DeepSeek-R1}: Incentivizing reasoning capability in {LLMs} via
+  reinforcement learning.
+\newblock \emph{arXiv preprint arXiv:2501.12948}, 2025.
+
+\bibitem[Gu et~al.(2024)Gu, Dong, Wei, and Huang]{gu2024minillm}
+Yuxian Gu, Li~Dong, Furu Wei, and Minlie Huang.
+\newblock {MiniLLM}: Knowledge distillation of large language models.
+\newblock In \emph{International Conference on Learning Representations}, 2024.
+
+\bibitem[Hendrycks et~al.(2021)Hendrycks, Burns, Kadavath, Arora, Basart, Tang,
+  Song, and Steinhardt]{hendrycks2021measuring}
+Dan Hendrycks, Collin Burns, Saurav Kadavath, Akul Arora, Steven Basart, Eric
+  Tang, Dawn Song, and Jacob Steinhardt.
+\newblock Measuring mathematical problem solving with the {MATH} dataset.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2021.
+
+\bibitem[Hinton et~al.(2015)Hinton, Vinyals, and Dean]{hinton2015distilling}
+Geoffrey Hinton, Oriol Vinyals, and Jeff Dean.
+\newblock Distilling the knowledge in a neural network.
+\newblock In \emph{NIPS Deep Learning and Representation Learning Workshop},
+  2015.
+
+\bibitem[Holtzman et~al.(2020)Holtzman, Buys, Du, Forbes, and
+  Choi]{holtzman2020curious}
+Ari Holtzman, Jan Buys, Li~Du, Maxwell Forbes, and Yejin Choi.
+\newblock The curious case of neural text degeneration.
+\newblock In \emph{International Conference on Learning Representations}, 2020.
+
+\bibitem[Hu et~al.(2022)Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and
+  Chen]{hu2022lora}
+Edward~J. Hu, Yelong Shen, Phillip Wallis, Zeyuan Allen-Zhu, Yuanzhi Li, Shean
+  Wang, Lu~Wang, and Weizhu Chen.
+\newblock {LoRA}: Low-rank adaptation of large language models.
+\newblock In \emph{International Conference on Learning Representations}, 2022.
+
+\bibitem[Huang et~al.(2025)Huang, Song, Zhang, and Ren]{huang2025selectkd}
+Haiduo Huang, Jiangcheng Song, Yadong Zhang, and Pengju Ren.
+\newblock {SelecTKD}: Selective token-weighted knowledge distillation for
+  {LLMs}.
+\newblock \emph{arXiv preprint arXiv:2510.24021}, 2025.
+
+\bibitem[Jang et~al.(2026)Jang, Yeom, Yeo, Lim, and Kim]{jang2026veto}
+Ijun Jang, Jewon Yeom, Juan Yeo, Hyunggu Lim, and Taesup Kim.
+\newblock Stable on-policy distillation through adaptive target reformulation.
+\newblock \emph{arXiv preprint arXiv:2601.07155}, 2026.
+
+\bibitem[Kim and Baek(2026)]{kim2026tsdkd}
+Minsang Kim and Seung~Jun Baek.
+\newblock Explain in your own words: Improving reasoning via token-selective
+  dual knowledge distillation.
+\newblock \emph{arXiv preprint arXiv:2603.13260}, 2026.
+
+\bibitem[Kim and Rush(2016)]{kim2016sequence}
+Yoon Kim and Alexander~M. Rush.
+\newblock Sequence-level knowledge distillation.
+\newblock In \emph{Proceedings of the 2016 Conference on Empirical Methods in
+  Natural Language Processing}, pages 1317--1327, 2016.
+
+\bibitem[Ko et~al.(2024)Ko, Kim, Chen, and Yun]{ko2024distillm}
+Jongwoo Ko, Sungnyun Kim, Tianyi Chen, and Se-Young Yun.
+\newblock {DistiLLM}: Towards streamlined distillation for large language
+  models.
+\newblock In \emph{International Conference on Machine Learning}, 2024.
+
+\bibitem[Li et~al.(2022)Li, Zhang, and He]{li2022stability}
+Conglong Li, Minjia Zhang, and Yuxiong He.
+\newblock The stability-efficiency dilemma: Investigating sequence length
+  warmup for training {GPT} models.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2022.
+
+\bibitem[Li et~al.(2025)Li, Dong, Sun, Wang, Xiong, Luo, Liu, Lu, Wang, Su,
+  Zheng, and Yan]{li2025preplan}
+Yang Li, Zhichen Dong, Yuhan Sun, Weixun Wang, Shaopan Xiong, Yijia Luo,
+  Jiashun Liu, Han Lu, Jiamang Wang, Wenbo Su, Bo~Zheng, and Junchi Yan.
+\newblock Attention illuminates {LLM} reasoning: The preplan-and-anchor rhythm
+  enables fine-grained policy optimization.
+\newblock \emph{arXiv preprint arXiv:2510.13554}, 2025.
+
+\bibitem[Lightman et~al.(2023)Lightman, Kosaraju, Burda, Edwards, Baker, Lee,
+  Leike, Schulman, Sutskever, and Cobbe]{lightman2023verify}
+Hunter Lightman, Vineet Kosaraju, Yuri Burda, Harri Edwards, Bowen Baker, Teddy
+  Lee, Jan Leike, John Schulman, Ilya Sutskever, and Karl Cobbe.
+\newblock Let's verify step by step.
+\newblock \emph{arXiv preprint arXiv:2305.20050}, 2023.
+
+\bibitem[Liu et~al.(2024)Liu, Xia, Wang, and Zhang]{liu2024evalplus}
+Jiawei Liu, Chunqiu~Steven Xia, Yuyao Wang, and Lingming Zhang.
+\newblock Is your code generated by {ChatGPT} really correct? rigorous
+  evaluation of large language models for code generation.
+\newblock \emph{Advances in Neural Information Processing Systems}, 2024.
+
+\bibitem[Lu et~al.(2025)Lu, Chen, Gulcehre, et~al.]{lu2025onpolicy}
+Kevin Lu, Tianjun Chen, Caglar Gulcehre, et~al.
+\newblock On-policy distillation.
+\newblock \emph{Thinking Machines Lab Blog}, 2025.
+\newblock \url{https://thinkingmachines.ai/blog/on-policy-distillation/}.
+
+\bibitem[Pouransari et~al.(2024)Pouransari, Li, Chang, Vasu, Koc, Shankar, and
+  Tuzel]{pouransari2024dataset}
+Hadi Pouransari, Chun-Liang Li, Jen-Hao~Rick Chang, Pavan Kumar~Anasosalu Vasu,
+  Cem Koc, Vaishaal Shankar, and Oncel Tuzel.
+\newblock Dataset decomposition: Faster {LLM} training with variable sequence
+  length curriculum.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2024.
+
+\bibitem[{Qwen Team}(2024)]{qwen2024qwen25math}
+{Qwen Team}.
+\newblock Qwen2.5-math technical report: Toward mathematical expert model via
+  self-improvement.
+\newblock \emph{arXiv preprint arXiv:2409.12122}, 2024.
+
+\bibitem[{Qwen Team}(2025)]{qwen2025qwen3}
+{Qwen Team}.
+\newblock Qwen3 technical report.
+\newblock \emph{arXiv preprint arXiv:2505.09388}, 2025.
+
+\bibitem[Shumailov et~al.(2024)Shumailov, Shumaylov, Zhao, Papernot, Anderson,
+  and Gal]{shumailov2024collapse}
+Ilia Shumailov, Zakhar Shumaylov, Yiren Zhao, Nicolas Papernot, Ross Anderson,
+  and Yarin Gal.
+\newblock {AI} models collapse when trained on recursively generated data.
+\newblock \emph{Nature}, 631\penalty0 (8022):\penalty0 755--759, 2024.
+
+\bibitem[Singh and Hakkani-T{\"u}r(2026)]{singh2026functional}
+Janvijay Singh and Dilek Hakkani-T{\"u}r.
+\newblock Do {LLMs} encode functional importance of reasoning tokens?
+\newblock \emph{arXiv preprint arXiv:2601.03066}, 2026.
+
+\bibitem[Tavor et~al.(2026)Tavor, Ebenspanger, Cnaan, and
+  Geva]{tavor2026rethinking}
+Almog Tavor, Itay Ebenspanger, Neil Cnaan, and Mor Geva.
+\newblock Rethinking selective knowledge distillation.
+\newblock \emph{arXiv preprint arXiv:2602.01395}, 2026.
+
+\bibitem[Vassoyan et~al.(2025)Vassoyan, Beau, and Plaud]{vassoyan2025ignorekl}
+Jean Vassoyan, Nathanael Beau, and Roman Plaud.
+\newblock Ignore the {KL} penalty! boosting exploration on critical tokens to
+  enhance {RL} fine-tuning.
+\newblock In \emph{Findings of the Association for Computational Linguistics:
+  NAACL 2025}, 2025.
+
+\bibitem[Wang et~al.(2025)Wang, Yu, Gao, Zheng, Liu, Lu, Dang, Chen, Yang,
+  Zhang, Liu, Yang, Zhao, Yue, Song, Yu, Huang, and Lin]{wang2025beyond8020}
+Shenzhi Wang, Le~Yu, Chang Gao, Chujie Zheng, Shixuan Liu, Rui Lu, Kai Dang,
+  Xionghui Chen, Jianxin Yang, Zhenru Zhang, Yuqiong Liu, An~Yang, Andrew Zhao,
+  Yang Yue, Shiji Song, Bowen Yu, Gao Huang, and Junyang Lin.
+\newblock Beyond the 80/20 rule: High-entropy minority tokens drive effective
+  reinforcement learning for {LLM} reasoning.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2025.
+
+\bibitem[Wei et~al.(2022)Wei, Wang, Schuurmans, Bosma, Ichter, Xia, Chi, Le,
+  and Zhou]{wei2022chainofthought}
+Jason Wei, Xuezhi Wang, Dale Schuurmans, Maarten Bosma, Brian Ichter, Fei Xia,
+  Ed~Chi, Quoc Le, and Denny Zhou.
+\newblock Chain-of-thought prompting elicits reasoning in large language
+  models.
+\newblock In \emph{Advances in Neural Information Processing Systems}, 2022.
+
+\bibitem[Wen et~al.(2023)Wen, Li, Du, and Mou]{wen2023fdivergence}
+Yuqiao Wen, Zichao Li, Wenyu Du, and Lili Mou.
+\newblock f-divergence minimization for sequence-level knowledge distillation.
+\newblock In \emph{Proceedings of the 61st Annual Meeting of the Association
+  for Computational Linguistics (Volume 1: Long Papers)}, pages 10817--10834,
+  2023.
+
+\bibitem[Wu et~al.(2025)Wu, Tao, Wang, Yang, Zhao, and Wong]{wu2025rethinking}
+Taiqiang Wu, Chaofan Tao, Jiahao Wang, Runming Yang, Zhe Zhao, and Ngai Wong.
+\newblock Rethinking {Kullback-Leibler} divergence in knowledge distillation
+  for large language models.
+\newblock In \emph{Proceedings of the International Conference on Computational
+  Linguistics (COLING)}, 2025.
+
+\bibitem[Xie et~al.(2026)Xie, Xue, Wu, Li, Wang, Hu, Liu, and
+  Zhang]{xie2026adakd}
+Xurong Xie, Zhucun Xue, Jiafu Wu, Jian Li, Yabiao Wang, Xiaobin Hu, Yong Liu,
+  and Jiangning Zhang.
+\newblock {LLM}-oriented token-adaptive knowledge distillation.
+\newblock In \emph{Proceedings of the AAAI Conference on Artificial
+  Intelligence}, 2026.
+
+\bibitem[Xu et~al.(2025)Xu, Han, Wang, Le, Madeka, Li, Wang, Agarwal, Lee, and
+  Pfister]{xu2025speculative}
+Wenda Xu, Rujun Han, Zifeng Wang, Long~T. Le, Dhruv Madeka, Lei Li,
+  William~Yang Wang, Rishabh Agarwal, Chen-Yu Lee, and Tomas Pfister.
+\newblock Speculative knowledge distillation: Bridging the teacher-student gap
+  through interleaved sampling.
+\newblock In \emph{International Conference on Learning Representations}, 2025.
+
+\bibitem[Yan et~al.(2024)Yan, Mao, Ji, Zhang, Patil, Stoica, and
+  Gonzalez]{yan2024bfcl}
+Fanjia Yan, Huanzhi Mao, Charlie Ji, Tianjun Zhang, Shishir~G. Patil, Ion
+  Stoica, and Joseph~E. Gonzalez.
+\newblock Berkeley function calling leaderboard.
+\newblock \emph{arXiv preprint arXiv:2402.15671}, 2024.
+
+\bibitem[Yan et~al.(2026)Yan, Liu, Shen, Wang, Fan, Zhang, Wu, Wang, and
+  Ye]{yan2026dasd}
+Shaotian Yan, Kaiyuan Liu, Chen Shen, Bing Wang, Sinan Fan, Jun Zhang, Yue Wu,
+  Zheng Wang, and Jieping Ye.
+\newblock Distribution-aligned sequence distillation for superior long-{CoT}
+  reasoning.
+\newblock \emph{arXiv preprint arXiv:2601.09088}, 2026.
+
+\bibitem[Yang et~al.(2026)Yang, Liu, Xie, Yang, Yang, and Lin]{yang2026beyond}
+Wenkai Yang, Weijie Liu, Ruobing Xie, Kai Yang, Saiyong Yang, and Yankai Lin.
+\newblock Learning beyond teacher: Generalized on-policy distillation with
+  reward extrapolation.
+\newblock \emph{arXiv preprint arXiv:2602.12125}, 2026.
+
+\end{thebibliography}

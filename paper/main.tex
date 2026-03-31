@@ -18,6 +18,11 @@
 \usepackage{algorithmic}
 \usepackage{microtype}
 
+% Allow more floats per page
+\renewcommand{\topfraction}{0.85}
+\renewcommand{\textfraction}{0.1}
+\setcounter{topnumber}{3}
+
 \hypersetup{
   colorlinks=true,
   linkcolor=blue!70!black,
@@ -83,6 +88,14 @@ Our contributions are:
 
 We analyze the quality of the teacher's per-token supervision signal across positions in student-generated trajectories. All analysis in this section uses Qwen2.5-Math-1.5B as the student and Qwen3-1.7B as the teacher on MATH-500, with 59,936 on-policy trajectories (mean length 386 tokens).
 
+% ---- Figure Group 1: Signal Distribution (placed early for page 2 float) ----
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=\textwidth]{figures/fig_signal_reverse_kl.pdf}
+    \caption{\textbf{Teacher signal quality degrades with position} (100 MATH-500 problems, 1 trajectory each). (a) Reverse KL divergence KL$(p_s \| p_t)$ decays from 2.09 in the first 50 tokens to $\sim$0.24 by position 1000. Dashed line shows the token-level log-prob gap, which nearly coincides with the reverse KL. (b) Teacher entropy drops from 0.26 to 0.12 while teacher-student agreement rises from 79\% to 93\%. At later positions, the teacher is effectively rubber-stamping the student's choices.}
+    \label{fig:signal}
+\end{figure*}
+
 \subsection{The Conditional Scoring Problem}
 \label{sec:conditional}
 
@@ -96,77 +109,46 @@ This creates a \emph{phase shift} in the teacher's role along the trajectory. At
 
 To investigate the distillation signal, we generate 59,936 on-policy trajectories (mean length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. Positions are 0-indexed throughout (position 0 is the first generated token).
 
-% ---- Figure Group 1: Signal Distribution ----
-\begin{figure*}[t]
-    \centering
-    \begin{subfigure}[b]{0.48\textwidth}
-        \centering
-        \includegraphics[width=\textwidth]{figures/fig_analysis_1_signal.pdf}
-    \end{subfigure}
-    \caption{\textbf{Signal distribution by position.} (a) KL divergence decays steeply from 3.06 at position 0 to a plateau of $\sim$0.4 after position 100. The first 100 tokens contain 43.9\% of total KL. (b) Teacher entropy drops from 1.07 to 0.14 while teacher-student agreement rises from 58\% to 87\%. At later positions, the teacher is effectively rubber-stamping the student's choices.}
-    \label{fig:signal}
-\end{figure*}
-
-Figure~\ref{fig:signal} shows two complementary views of the signal distribution. The KL divergence (left) reveals that the distillation signal is massively front-loaded: position 0 (KL = 3.06) is 8.5$\times$ higher than position 192 (KL = 0.36). The teacher confidence analysis (right) explains why: at early positions, the teacher's distribution is spread across multiple plausible continuations (entropy 1.07), reflecting genuine uncertainty about reasoning strategy. At later positions, the teacher is nearly deterministic (entropy 0.14) and agrees with the student on 87\% of tokens---it is no longer providing independent guidance, but merely confirming the student's choices.
+Figure~\ref{fig:signal} shows two complementary views of the signal distribution. The reverse KL divergence (left) reveals that the distillation signal is massively front-loaded: the first 50 tokens (KL = 2.09) carry 8.9$\times$ more signal than the 900--1000 range (KL = 0.24), with a steep initial decay followed by a long, slowly declining tail beyond position 200. The teacher confidence analysis (right) explains why: at early positions, the teacher's distribution has higher entropy (0.26 nats) and lower agreement with the student (79\%). By position 1000, entropy drops to 0.12 and agreement rises to 93\%---the teacher is no longer providing independent guidance, but merely confirming the student's choices.
 
 This is a direct consequence of the conditional scoring problem (\S\ref{sec:conditional}): once the student's prefix determines the reasoning approach, the teacher's conditional distribution collapses to near-agreement. The residual disagreement at late positions is dominated by formatting conventions (LaTeX delimiters, code patterns) rather than reasoning content.
 
-\paragraph{Strategy vs.\ execution.} Token-type analysis (Appendix~\ref{app:token_classification}) reveals that early high-KL tokens are predominantly \emph{planning} tokens (``To'', ``First'', ``Let'')---reflecting strategy disagreement---while late high-KL tokens are formatting conventions. Figure~\ref{fig:example_cont} (left) illustrates this with a concrete example: the first 100 tokens establish the solution approach, while the last 100 tokens execute the computation.
+\paragraph{Strategy vs.\ execution.} Token-type analysis (Appendix~\ref{app:token_classification}) reveals that early high-KL tokens are predominantly \emph{planning} tokens (``To'', ``First'', ``Let'')---reflecting strategy disagreement---while late high-KL tokens are formatting conventions. Figure~\ref{fig:example} illustrates this with a concrete example: the first 100 tokens establish the solution approach, while the last 100 tokens execute the computation.
 
-% ---- Figure Group 2: Example + Continuation ----
-\begin{figure*}[t]
+% ---- Figure 2: Example + Continuation/Bar chart (combined) ----
+\begin{figure*}[!t]
 \centering
-\begin{minipage}[t]{0.52\textwidth}
-\small
-\fbox{\parbox{0.95\textwidth}{
+\footnotesize
+\fbox{\parbox{0.93\textwidth}{
 \textbf{Problem:} In an isosceles right triangle, the altitude to the hypotenuse has length $4\sqrt{2}$. What is the area? \\[3pt]
-\colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's start by understanding the problem. In an isosceles right triangle, the two legs are equal, and the hypotenuse is $\sqrt{2}$ times the leg. If we denote each leg by $a$, then hypotenuse $= a\sqrt{2}$. The altitude to the hypotenuse is half the leg, because the altitude bisects the...''}} \\[3pt]
-\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Last 100 tokens (execution):} ``...Solving: $a\sqrt{2} = 8\sqrt{2} \implies a = 8$. The area is $\frac{1}{2} \times 8 \times 8 = \boxed{32}$''}}
+\colorbox{blue!10}{\parbox{0.91\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's start by understanding the problem. In an isosceles right triangle, the two legs are equal, and the hypotenuse is $\sqrt{2}$ times the leg. If we denote each leg by $a$, then hypotenuse $= a\sqrt{2}$. The altitude to the hypotenuse is half the leg, because the altitude bisects the...''}} \\[3pt]
+\colorbox{orange!10}{\parbox{0.91\textwidth}{\textbf{Last 100 tokens (execution):} ``...altitude from the right-angle vertex to the hypotenuse. This altitude has length $h = \frac{a \cdot a}{a\sqrt{2}} = \frac{a^2}{a\sqrt{2}} = \frac{a}{\sqrt{2}} = \frac{a\sqrt{2}}{2}$. Setting this equal to $4\sqrt{2}$: $\frac{a\sqrt{2}}{2} = 4\sqrt{2}$, so $a\sqrt{2} = 8\sqrt{2}$, giving $a = 8$. The area is $\frac{1}{2} \times 8 \times 8 = \boxed{32}$.''}}
 }}
-\end{minipage}%
-\hfill
-\begin{minipage}[t]{0.45\textwidth}
-\centering
-\includegraphics[width=\textwidth]{figures/fig_continuation.pdf}
-\end{minipage}
-\caption{\textbf{Early tokens encode strategy; early tokens determine the trajectory.} \emph{Left:} A student response where the first 100 tokens (blue) establish the approach (define variables, identify relationships), while the last 100 tokens (orange) execute the computation. \emph{Right:} Prefix continuation on MATH-500. When the teacher continues from a 100-token student prefix, it achieves 62.7\% (near its 65.3\% baseline). At 300 tokens, performance falls to 51.8\% (student baseline)---the teacher cannot recover once the student's reasoning is entrenched.}
-\label{fig:example_cont}
+\vspace{4pt}
+\includegraphics[width=0.95\textwidth]{figures/fig_analysis_4_degradation.pdf}
+\vspace{-6pt}
+\caption{\textbf{Early tokens encode strategy; later tokens merely execute.} \emph{Top:} example showing first 100 tokens (blue) establish the approach while last 100 tokens (orange) execute computation. \emph{Bottom left:} prefix continuation---teacher performance degrades to student baseline by 300 tokens. \emph{Bottom right:} best-checkpoint accuracy per 100-token region. First-100 yields +14.9pp; middle-100 and last-100 hurt.}
+\label{fig:example}
+\label{fig:continuation}
 \end{figure*}
 
 \subsection{Test-Time Validation: Prefix Continuation}
 \label{sec:continuation}
 
-Figure~\ref{fig:example_cont} (right) directly tests whether early tokens determine response quality. With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its baseline. At 300 tokens, performance falls to 51.75\%: the student's choices become entrenched. Conversely, with a teacher prefix, the student achieves only 47.00\%---\emph{below} its baseline---due to style mismatch. Performance is dominated by the continuation model, not the prefix. The rapid degradation quantifies the \emph{window of effective influence}: the first $\sim$100 tokens are where reasoning strategy is still malleable.
+We directly test whether early tokens determine response quality via prefix continuation (Figure~\ref{fig:continuation}, left). With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its baseline. At 300 tokens, performance falls to 51.75\%, nearly matching the student baseline: the student's choices become entrenched. The rapid degradation quantifies the \emph{window of effective influence}: the first $\sim$100 tokens are where reasoning strategy is still malleable.
 
-
-% ---- Figure Group 3: Training on Different Positions ----
 \subsection{Training-Time Validation: Position Region Ablation}
 \label{sec:position_ablation}
 
-The analysis above predicts that early-position training should be most effective and later-position training should be harmful. We test this by training on different 100-token regions (Figure~\ref{fig:positions}).
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=0.7\textwidth]{figures/fig_analysis_3_positions.pdf}
-    \caption{\textbf{Training on different position regions} (each uses exactly 100 tokens). First-100 yields +14.9pp, while middle-100 and last-100 \emph{hurt} performance below the undistilled baseline (dashed line). Full-sequence training underperforms first-100 because it includes harmful later-position signals.}
-    \label{fig:positions}
-\end{figure}
+The analysis above predicts that early-position training should be most effective and later-position training should be harmful. We test this by training on different 100-token regions (Figure~\ref{fig:continuation}, right).
 
 First-100 improves avg@4 by +14.9pp and outperforms full-sequence training. Middle-100 and last-100 both perform \emph{below the undistilled baseline}---later-position signals are not merely uninformative, they are actively harmful. Random-100 (63.05\%) outperforms full-seq (62.35\%), further confirming that including later-position tokens is a net negative.
 
 
-% ---- Figure Group 4: Degradation ----
 \subsection{Training Instability as a Consequence}
 \label{sec:degradation}
 
-\begin{figure*}[t]
-    \centering
-    \includegraphics[width=0.85\textwidth]{figures/fig_analysis_4_degradation.pdf}
-    \caption{\textbf{Full-sequence distillation degrades over training.} (a) On MATH-500, positional variants are stable while full-seq plateaus lower. (b) On HumanEval, full-seq drops from 40.2\% to 26.8\% ($-$33\%), while positional methods maintain or improve. The degradation is consistent with accumulated exposure to harmful later-position signals.}
-    \label{fig:degradation}
-\end{figure*}
-
-Figure~\ref{fig:degradation} shows that full-sequence distillation degrades with continued training, especially on coding (HumanEval drops 33\%), while positional distillation remains stable. This is a direct consequence of the signal quality analysis: over many training steps, noisy gradients from later positions accumulate and distort the student's parameters.
+Figure~\ref{fig:degradation} shows that full-sequence distillation degrades with continued training on coding (HumanEval drops from 40.2\% to 26.8\%, $-$33\%), while positional distillation remains stable. This is a direct consequence of the signal quality analysis: over many training steps, noisy gradients from later positions accumulate and distort the student's parameters.
 
 \subsection{Summary of Findings}
 \label{sec:hypothesis}
@@ -230,24 +212,36 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \midrule
 --- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- \\
 \midrule
-\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & --- & ${\sim}$280 \\
- & \textbf{Ours ($N{=}100$)} & \textbf{65.85} & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
+\multirow{3}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & --- & ${\sim}$280 \\
+ & \textbf{Ours ($N{=}50$)} & \textbf{66.65} & \textbf{42.07} & 52.12 & 57.20 & ${\sim}$4 \\
+ & \textbf{Ours ($N{=}100$)} & 65.85 & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
 \midrule
-\multirow{2}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
- & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{43.29} & \textbf{52.38} & \textbf{45.80} & ${\sim}$8 \\
+\multirow{3}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
+ & \textbf{Ours ($N{=}50$)} & --- & --- & --- & \textbf{50.17} & ${\sim}$4 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{43.29} & \textbf{52.38} & 45.80 & ${\sim}$8 \\
 \midrule
 \multicolumn{7}{l}{\textit{Student: gemma-2-2b-it (LoRA) --- cross-family}} \\
 \midrule
 --- & Baseline & 13.45 & 23.78 & 40.48 & 73.50 & --- \\
 \midrule
-\multirow{2}{*}{gemma-3-4b-it} & Full-seq & 11.70$^\S$ & --- & --- & --- & ${\sim}$210 \\
+\multirow{3}{*}{gemma-3-4b-it} & Full-seq & 11.70$^\S$ & --- & --- & --- & ${\sim}$210 \\
+ & \textbf{Ours ($N{=}50$)} & --- & --- & --- & --- & ${\sim}$4 \\
  & \textbf{Ours ($N{=}100$)} & \textbf{27.20} & \textbf{31.10} & \textbf{50.53} & \textbf{82.50} & ${\sim}$8 \\
 \bottomrule
 \multicolumn{7}{l}{\footnotesize $^\S$ Gemma full-seq degrades below baseline; other tasks not evaluated.}
 \end{tabular}
 \end{table}
 
-\paragraph{Results.} With the Qwen3-1.7B teacher, \method{} ($N{=}100$) matches or exceeds full-sequence distillation on 3 of 4 benchmarks while achieving 35$\times$ speedup. Scaling to the 4B teacher improves quality further: 68.95\% avg@4 on math (+3.1pp over 1.7B), with \method{} outperforming full-seq on all metrics. The Gemma cross-family pair demonstrates that \method{} transfers across model families with incompatible tokenizers, doubling math accuracy (13.45\% $\rightarrow$ 27.20\%) and substantially improving all other metrics. Additional teacher scales (8B) are in Appendix~\ref{app:additional_pairs}.
+\paragraph{Results.} With the Qwen3-1.7B teacher, \method{} matches or exceeds full-sequence distillation on all benchmarks while achieving 35--70$\times$ speedup. $N{=}50$ achieves the best math accuracy (66.65\% avg@4, +4.3pp over full-seq) and matches full-seq on MBPP; $N{=}100$ achieves the best BFCL score (61.30\%). Scaling to the 4B teacher improves quality further: 68.95\% avg@4 on math (+3.1pp over 1.7B), with \method{} outperforming full-seq on all metrics. The Gemma cross-family pair demonstrates that \method{} transfers across model families with incompatible tokenizers, doubling math accuracy (13.45\% $\rightarrow$ 27.20\%) and substantially improving all other metrics. Additional teacher scales (8B) are in Appendix~\ref{app:additional_pairs}.
+
+\paragraph{Cascade effect.} A natural concern is that distilling only the first $N$ tokens might only improve those positions. We find the opposite: early-token distillation creates a \emph{cascade effect} that reshapes the entire response (Figure~\ref{fig:cascade}). Because the early tokens determine the reasoning strategy, improving them causes the subsequent execution tokens to change accordingly---even though those later positions receive zero distillation signal. Concretely, pos-200 reduces KL by 50--58\% within the trained range (positions 0--200) and by 35--39\% in the \emph{untrained} range (positions 200--400). This is consistent with the strategy-then-execution structure identified in Section~\ref{sec:kl_distribution}: better strategy decisions at early positions naturally lead to better execution at later positions.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=\columnwidth]{figures/fig_cascade.pdf}
+    \caption{\textbf{Cascade effect.} Pos-200 distillation reduces KL not only in the trained range (0--200) but also in the untrained range (200--400+), confirming that early-token improvements cascade through the autoregressive generation.}
+    \label{fig:cascade}
+\end{figure}
 
 
 \subsection{Training Stability}
@@ -261,23 +255,29 @@ As shown in Figure~\ref{fig:degradation} and discussed in Section~\ref{sec:degra
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Training efficiency.} Per-step time and peak GPU memory on a single A6000 (48GB).}
+\caption{\textbf{Training resource usage for \method{} ($N{=}100$).} Peak GPU memory (measured via \texttt{nvidia-smi}) and per-step time breakdown. Student: Qwen2.5-Math-1.5B (LoRA), Teacher: Qwen3-1.7B. Each model on a separate GPU.}
 \label{tab:timing}
 \small
-\begin{tabular}{llccc}
+\begin{tabular}{l cc l}
 \toprule
-\textbf{Teacher} & \textbf{Method} & \textbf{Time/step} & \textbf{Peak GPU mem} & \textbf{Total (200 steps)} \\
+\textbf{Model} & \multicolumn{2}{c}{\textbf{Peak GPU Memory}} & \textbf{Time / step} \\
+\cmidrule(lr){2-3}
+ & bs$=$1 & bs$=$8 & \\
 \midrule
-\multirow{2}{*}{Q3-1.7B} & Full-seq & ${\sim}$280s & 43 GB (vLLM) & ${\sim}$16 hours \\
- & Ours ($N{=}100$) & ${\sim}$8s & 8 GB (HF) & ${\sim}$27 min \\
-\midrule
-\multirow{2}{*}{Q3-4B} & Full-seq & ${\sim}$210s & 46 GB (vLLM) & ${\sim}$12 hours \\
- & Ours ($N{=}100$) & ${\sim}$8s & 12 GB (HF) & ${\sim}$27 min \\
+Student (1.5B) & 4.9\,GB & 13.4\,GB & Gen:\;${\sim}$5\,s \quad Train:\;${\sim}$2\,s \\
+Teacher (1.7B) & 4.6\,GB & 4.9\,GB & Scoring:\;${\sim}$1\,s \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:timing} shows that \method{} achieves 26--35$\times$ wall-clock speedup. The dominant cost in full-seq is autoregressive generation ($\sim$280s/step for sequences averaging $\sim$1000 tokens); \method{} generates only 100 tokens ($\sim$8s/step). \Method{} also requires significantly less GPU memory because it does not need a vLLM/SGLang inference server---100 tokens can be generated via standard HF generate, enabling training on a single consumer GPU.
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.7\columnwidth]{figures/fig_analysis_3_positions.pdf}
+    \caption{\textbf{Full-sequence distillation degrades on coding.} On HumanEval, full-seq drops from 40.2\% to 26.8\% ($-$33\%) over 400 training steps, while first-100 positional distillation remains stable above baseline.}
+    \label{fig:degradation}
+\end{figure}
+
+Table~\ref{tab:timing} shows the resource footprint of \method{}. The total per-step time is ${\sim}$8\,s (5\,s generation + 2\,s training + 1\,s teacher scoring), compared to ${\sim}$280\,s for full-seq distillation---a 35$\times$ speedup. Peak GPU memory with bs$=$8 is 13.4\,GB for the student and 4.9\,GB for the teacher, well within a single consumer GPU. \Method{} does not require a vLLM/SGLang inference server since 100 tokens can be generated via standard HF \texttt{generate}.
 
 % ============================================================================
 % 5. ABLATION EXPERIMENTS
@@ -288,71 +288,33 @@ Table~\ref{tab:timing} shows that \method{} achieves 26--35$\times$ wall-clock s
 \subsection{Position Limit Sweep}
 \label{sec:pos_sweep}
 
-How sensitive is \method{} to the choice of $N$? Table~\ref{tab:pos_sweep} presents results across $N \in \{5, 10, 20, 50, 100, 150, 200\}$ on MATH-500.
+How sensitive is \method{} to the choice of $N$? Figure~\ref{fig:pos_sweep} shows best avg@4 across $N \in \{5, 10, 20, 50, 100, 150, 200\}$ on MATH-500.
 
-\begin{table}[t]
-\centering
-\caption{\textbf{Position limit sweep on MATH-500.} LoRA, Qwen2.5-Math-1.5B $\rightarrow$ Qwen3-1.7B, $n{=}1$, 3,200 problems. Best avg@4 across all training steps. Baseline: 50.95\%.}
-\label{tab:pos_sweep}
-\small
-\begin{tabular}{ccc}
-\toprule
-\textbf{Pos.\ limit $N$} & \textbf{\% KL signal} & \textbf{Best avg@4} \\
-\midrule
-50 & 26.2\% & 66.65\% \\
-100 & 43.9\% & 65.85\% \\
-150 & --- & 66.65\% \\
-200 & 66.1\% & 66.05\% \\
-\midrule
-Full-seq & 100\% & 62.35\% \\
-\midrule
-\textit{Baseline} & --- & \textit{50.95\%} \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.75\columnwidth]{figures/fig_pos_sweep.pdf}
+    \caption{\textbf{Position limit sweep on MATH-500.} Best avg@4 across training steps for each $N$. Performance increases monotonically and surpasses full-seq (dashed orange) at $N{\geq}150$. Even $N{=}5$ provides +5.5pp over baseline (dashed gray).}
+    \label{fig:pos_sweep}
+\end{figure}
 
-The results reveal a robust sweet spot at $N = 50$--$200$, where performance saturates. All positional variants ($N{=}50$ through $N{=}200$) converge to $\sim$66\% avg@4, outperforming full-sequence distillation (62.35\%) by 3--4pp. The method is not sensitive to the exact choice of $N$ within this range.
-
-\paragraph{Value clipping is not a substitute for positional truncation.} An alternative to positional truncation is to clip per-token KL contributions to a maximum value, reducing the influence of extreme outliers at all positions. We test full-trajectory training with KL clipped to 2.0. This achieves only 48.80\% avg@4---below the undistilled baseline (50.95\%) and far below positional distillation (65.85\%). Clipping indiscriminately removes high-KL signal from early positions (strategy selection tokens with KL $\gg$ 2) along with late-position noise. Positional truncation is strictly more effective because it preserves all signal at early positions while removing all signal at late positions.
+The results reveal a robust sweet spot at $N = 50$--$200$, where performance saturates. All positional variants outperform full-sequence distillation (65.55\%), with $N{=}200$ achieving the best result (66.75\%). Even $N{=}5$ provides +5.5pp over baseline, confirming that the very first tokens carry substantial distillation signal.
 
 
 \subsection{Token Selection Strategy Comparison}
 \label{sec:token_selection}
 
-A natural alternative to positional selection is \emph{information-theoretic} selection: choose the $k$ tokens with the highest KL divergence or entropy, regardless of position. We compare four selection strategies, each selecting exactly 100 tokens from full-length student generations:
+A natural alternative to positional selection is \emph{information-theoretic} selection: choose the $k$ tokens with the highest KL divergence or entropy, regardless of position. We compare four selection strategies, each selecting exactly 100 tokens from full-length student generations (Figure~\ref{fig:token_select}).
 
-\begin{table}[t]
-\centering
-\caption{\textbf{Token selection strategies} ($k{=}100$). All use full-length generation then select 100 tokens for loss. Signal coverage: fraction of the total signal (KL or entropy) captured by the selected tokens. Baseline: 50.95\%.}
-\label{tab:token_select}
-\small
-\begin{tabular}{lcccc}
-\toprule
-\textbf{Selection strategy} & \textbf{Signal type} & \textbf{Coverage} & \textbf{Best avg@4} & \textbf{Mean pos.} \\
-\midrule
-\textbf{Prefix (first 100)} & KL & 48.8\% & \textbf{65.85\%} & 50 \\
-Random 100 & --- & $\sim$13\% & 63.05\% & $\sim$375 \\
-Top-Ent.-Teacher 100 & Teacher ent. & 96.0\% & 62.20\% & $\sim$280 \\
-Top-Ent.-Student 100 & Student ent. & 93.5\% & 61.35\% & $\sim$240 \\
-Full-seq (all tokens) & all & 100\% & 62.35\% & --- \\
-Top-KL 100 & KL & 95.6\% & 58.60\% & $\sim$313 \\
-\midrule
-\textit{Baseline (no distill)} & --- & --- & \textit{50.95\%} & --- \\
-\bottomrule
-\end{tabular}
-\end{table}
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.8\columnwidth]{figures/fig_token_select.pdf}
+    \caption{\textbf{Token selection strategies} ($k{=}100$, best avg@4). Prefix (first 100 tokens) outperforms all alternatives. Top-KL and top-entropy strategies select tokens with the highest signal concentration (95\%+ of total KL/entropy) but these tokens are at later positions (mean pos.\ 240--313) where the teacher signal is harmful. Random-100 outperforms all ``smart'' strategies except prefix by statistically avoiding later positions.}
+    \label{fig:token_select}
+\end{figure}
 
-Table~\ref{tab:token_select} reveals a striking pattern: \textbf{the strategies that capture the most signal perform worst.} Top-KL-100 captures 95.6\% of total KL divergence yet achieves only 58.60\%---the worst of all methods. Top-entropy strategies, which capture 93--96\% of their respective entropy signals, also underperform prefix and random selection. Moreover, top-KL degrades sharply from 58.60\% (step 50) to 45.70\% (step 100), dropping below the undistilled baseline.
+The results reveal a striking pattern: \textbf{the strategies that capture the most signal perform worst.} Top-KL-100 captures 95.6\% of total KL divergence yet achieves only 58.60\%---the worst of all methods. The key difference is \emph{position}: high-KL and high-entropy tokens are concentrated at later positions (mean position 240--313), while prefix tokens span positions 0--99. This confirms that \textbf{position is the most important criterion for token selection in on-policy distillation}.
 
-The key difference is \emph{position}: high-KL and high-entropy tokens are concentrated at later positions (mean position 240--313), while prefix tokens span positions 0--99. Random-100, despite capturing only $\sim$13\% of any signal, outperforms all ``smart'' strategies except prefix---because it statistically avoids concentrating on harmful later positions.
-
-This confirms that \textbf{position is the most important criterion for token selection in on-policy distillation}. Capturing more of the raw KL or entropy signal is counterproductive when that signal comes from positions where the teacher is conditioned on the student's prefix and can no longer provide independent guidance.
-
-\subsection{Cascade Effect}
-\label{sec:cascade}
-
-A natural concern is that distilling only the first $N$ tokens might only improve those specific positions. We find strong evidence to the contrary: early-token distillation creates a \emph{cascade effect} that reshapes the entire trajectory. Comparing distilled and base model responses, late tokens (which receive zero distillation signal) change just as much as early tokens (Jaccard similarity to baseline = 0.251 for both halves). Moreover, pos-200 reduces KL by 50--60\% within the trained range (positions 0--200) and by 30--40\% in the \emph{untrained} range (positions 200--400). This is consistent with autoregressive generation: better early decisions propagate through the entire response.
-
+\paragraph{LoRA vs.\ full fine-tuning.} LoRA ($r{=}32$) substantially outperforms full fine-tuning on both math (+9.7pp avg@4) and coding (+5.5pp HumanEval) for pos-100. Full results are in Appendix~\ref{app:full_results}.
 
 \paragraph{Additional student-teacher pairs.} We evaluate with Qwen3-1.7B and Qwen3-4B as students (with 4B and 8B teachers). Distillation is most effective when the student has significant room for improvement: Qwen3-1.7B gains +13.9pp on BFCL from a 4B teacher. Stronger students show diminishing returns (Appendix~\ref{app:additional_pairs}).
 
@@ -395,8 +357,8 @@ A natural concern is that distilling only the first $N$ tokens might only improv
 
 \begin{table}[!htbp]
 \centering
-\caption{\textbf{Training efficiency.} Per-step wall-clock time on a single A6000 (48GB). Student: Qwen2.5-Math-1.5B, LoRA, bs=16.}
-\label{tab:timing}
+\caption{\textbf{Per-step time breakdown.} Wall-clock time on a single A6000 (48GB). Student: Qwen2.5-Math-1.5B, LoRA, bs=16.}
+\label{tab:timing_detailed}
 \small
 \begin{tabular}{llcccc}
 \toprule
@@ -538,6 +500,67 @@ Full-seq & \textbf{80.0} & 72.2 & 77.0 & 74.2 \\
 \midrule
 \multirow{2}{*}{Full-seq} & HE & \textbf{40.2} & 31.7 & 32.3 & 32.9 & 27.4 & 28.0 & 26.8 & 26.8 \\
  & MBPP & 52.6 & 48.9 & 49.5 & 48.1 & 47.9 & 47.1 & 48.4 & 47.6 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+
+\subsection{Full Fine-Tuning Results}
+
+\begin{table}[!htbp]
+\centering
+\caption{\textbf{MATH-500 per-step results, full fine-tuning.} $n{=}1$, $\text{bs}{=}16$, 3,200 problems, lr=$5{\times}10^{-6}$. Baseline: 50.95\% avg@4.}
+\label{tab:app_math_fullft}
+\small
+\begin{tabular}{ll cccc}
+\toprule
+\textbf{Method} & \textbf{Metric} & \textbf{Step 50} & \textbf{Step 100} & \textbf{Step 150} & \textbf{Step 200} \\
+\midrule
+\multirow{3}{*}{Pos-50} & avg@4 & 55.55 & 55.85 & \textbf{56.75} & 55.50 \\
+ & maj@4 & 65.20 & 65.00 & 66.20 & 64.20 \\
+ & pass@4 & 75.60 & 74.40 & 74.80 & 75.00 \\
+\midrule
+\multirow{3}{*}{Pos-100} & avg@4 & 55.15 & \textbf{56.20} & 55.65 & 54.80 \\
+ & maj@4 & 64.00 & 64.20 & 64.60 & 63.00 \\
+ & pass@4 & 74.00 & 73.80 & 74.20 & 74.20 \\
+\midrule
+\multirow{3}{*}{Pos-200} & avg@4 & 55.45 & 55.80 & 55.90 & \textbf{56.40} \\
+ & maj@4 & 64.40 & 64.00 & 64.00 & 65.20 \\
+ & pass@4 & 74.60 & 74.80 & 75.60 & 75.20 \\
+\midrule
+\multirow{3}{*}{Full-seq} & avg@4 & 53.75 & 56.95 & 57.55 & \textbf{58.20} \\
+ & maj@4 & 61.00 & 66.80 & 65.80 & 65.40 \\
+ & pass@4 & 73.40 & 77.40 & 75.60 & 75.40 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[!htbp]
+\centering
+\caption{\textbf{Coding results, full fine-tuning.} HumanEval (HE) and MBPP pass@1. $n{=}1$, $\text{bs}{=}16$, 6,400 problems, lr=$5{\times}10^{-6}$.}
+\label{tab:app_coding_fullft}
+\footnotesize
+\begin{tabular}{llcccccccc}
+\toprule
+\textbf{Config} & \textbf{Metric} & \textbf{s50} & \textbf{s100} & \textbf{s150} & \textbf{s200} & \textbf{s250} & \textbf{s300} & \textbf{s350} & \textbf{s400} \\
+\midrule
+\multirow{2}{*}{Pos-50} & HE & 31.7 & 35.4 & \textbf{36.0} & 36.0 & 36.0 & 35.4 & 36.0 & 34.8 \\
+ & MBPP & 52.6 & \textbf{53.4} & 52.9 & 52.4 & 52.4 & 52.6 & 52.9 & 53.4 \\
+\midrule
+\multirow{2}{*}{Pos-100} & HE & 31.7 & 34.1 & 35.4 & 34.8 & \textbf{36.6} & 36.0 & 36.0 & 36.6 \\
+ & MBPP & 52.6 & \textbf{54.0} & 52.6 & 52.1 & 53.2 & 53.4 & 53.4 & 52.9 \\
+\midrule
+\multirow{2}{*}{Pos-150} & HE & 31.7 & 36.0 & 36.0 & 35.4 & 36.0 & 36.6 & 35.4 & \textbf{37.2} \\
+ & MBPP & 53.2 & 51.9 & 52.4 & 52.4 & 53.2 & \textbf{54.2} & 53.2 & 52.4 \\
+\midrule
+\multirow{2}{*}{Pos-250} & HE & 32.9 & 34.8 & 35.4 & 35.4 & 37.2 & 36.6 & \textbf{37.8} & 33.5 \\
+ & MBPP & 54.0 & 53.7 & 54.0 & \textbf{54.8} & 54.5 & 53.4 & 54.2 & 53.2 \\
+\midrule
+\multirow{2}{*}{Pos-200tok} & HE & 32.3 & \textbf{36.6} & 36.6 & 35.4 & 36.0 & 34.8 & 36.0 & 35.4 \\
+ & MBPP & 52.1 & 52.6 & 54.0 & 52.6 & 53.7 & \textbf{54.5} & 53.2 & 53.7 \\
+\midrule
+\multirow{2}{*}{Full-seq} & HE & 32.3 & 32.3 & \textbf{36.6} & 36.0 & 31.1 & 30.5 & 31.7 & 31.1 \\
+ & MBPP & 53.2 & 53.4 & 53.2 & \textbf{54.0} & 51.9 & 52.9 & 52.9 & 53.7 \\
 \bottomrule
 \end{tabular}
 \end{table}

@@ -1,0 +1,47 @@
+{
+  "0-50": {
+    "mean_entropy": 1.0685949561377626,
+    "median_entropy": 0.71484375,
+    "mean_top1_prob": 0.7236305454799107,
+    "median_top1_prob": 0.796875,
+    "mean_teacher_lp": -2.0048674482958657,
+    "median_teacher_lp": -0.4189453125,
+    "n_tokens": 4900
+  },
+  "50-100": {
+    "mean_entropy": 0.4298984402709579,
+    "median_entropy": 0.07373046875,
+    "mean_top1_prob": 0.8642546818648568,
+    "median_top1_prob": 0.98828125,
+    "mean_teacher_lp": -0.8244380919877429,
+    "median_teacher_lp": -0.0133056640625,
+    "n_tokens": 4991
+  },
+  "100-200": {
+    "mean_entropy": 0.24751923719657293,
+    "median_entropy": 0.00518798828125,
+    "mean_top1_prob": 0.9184711005804929,
+    "median_top1_prob": 1.0,
+    "mean_teacher_lp": -0.4005040429052942,
+    "median_teacher_lp": -0.0005340576171875,
+    "n_tokens": 9865
+  },
+  "200-400": {
+    "mean_entropy": 0.1959659637767745,
+    "median_entropy": 0.000820159912109375,
+    "mean_top1_prob": 0.9351240392068062,
+    "median_top1_prob": 1.0,
+    "mean_teacher_lp": -0.3258999849922373,
+    "median_teacher_lp": -7.271766662597656e-05,
+    "n_tokens": 17216
+  },
+  "400-800": {
+    "mean_entropy": 0.14460878662633903,
+    "median_entropy": 0.0003223419189453125,
+    "mean_top1_prob": 0.9500447830914212,
+    "median_top1_prob": 1.0,
+    "mean_teacher_lp": -0.2770096039895995,
+    "median_teacher_lp": -2.5510787963867188e-05,
+    "n_tokens": 14425
+  }
+}

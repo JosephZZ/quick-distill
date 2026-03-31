@@ -34,6 +34,8 @@ Positional loss (training only on the first N response tokens) is effective acro
 | Math | LoRA | TopEnt-Teacher-100 | 150 | avg@4 | 62.20% |
 | Math | LoRA | TopEnt-Student-100 | 100 | avg@4 | 61.35% |
 | Math | LoRA | TopKL-100 | 50 | avg@4 | 58.60% |
+| Math | LoRA | Middle-100 | 200 | avg@4 | 47.80% |
+| Math | LoRA | Last-100 | 200 | avg@4 | 50.35% |
 | Coding | LoRA | Pos-50 | 350 | HE | 42.1 |
 | Coding | LoRA | Pos-100 | 150 | HE | 42.1 |
 | Coding | LoRA | Pos-150 | 250 | HE | 41.5 |
@@ -95,9 +97,36 @@ Positional loss (training only on the first N response tokens) is effective acro
 | 150 | 62.35% | 69.40% | 74.60% |
 | 200 | 61.20% | 65.20% | 75.00% |
 
-Note: Unlike the n16bs16 full-seq experiment, this n1bs16 config does NOT show boxed repetition degradation. avg@4 is stable at 61-62%. However, it is still 3-4pp below the best positional variants (pos-50: 66.65%, pos-100: 65.85%).
+Note: Math avg@4 is stable at 61-62% (no repetition degradation). However, it is still 3-4pp below the best positional variants (pos-50: 66.65%, pos-100: 65.85%).
 
-Checkpoint: `checkpoints/fullseq-n1bs16-single/` (on scai1)
+#### Full-seq n1bs16 Coding & Funcall (evaluated from math-trained checkpoint)
+
+**WARNING**: These coding/funcall evals were run on the math-trained fullseq checkpoint (trained on NuminaMath-CoT), NOT on a coding/funcall-trained checkpoint. Results are not meaningful for comparison.
+
+### Fullseq Coding (1.7B teacher, task-specific training)
+
+Experiment: `scale-m1.5b-t1.7b-coding-fullseq` (on InfraWaves). Trained on CodeUltraFeedback.
+
+| Step | HE | HE+ |
+|------|-----|------|
+| 50 | 31.7% | 26.2% |
+| 100-200 | *(unmerge bug — identical to step 50)* | |
+
+Note: HE = 31.7% is below baseline (32.93%). Fullseq with 1.7B teacher fails on coding.
+
+### Fullseq Funcall (1.7B teacher, task-specific training)
+
+Experiment: `scale-m1.5b-t1.7b-funcall-fullseq` (on InfraWaves). Trained on funcall data.
+
+| Step | full_acc | name_acc | parse_rate |
+|------|----------|----------|------------|
+| 50 | 1.83% | 8.33% | 22.83% |
+| 100 | 2.50% | 8.00% | 23.33% |
+| 200 | 2.33% | 8.00% | 22.00% |
+
+Note: full_acc < 3% across all steps, far below pos-100 (61.30%). Parse rate ~23% means the model rarely produces valid function call format.
+
+Checkpoint: `checkpoints/fullseq-n1bs16-single/` (on scai5)
 
 ### Full-seq Funcall (n1, 3200 problems, same config)
 
@@ -351,17 +380,47 @@ Selects 100 random tokens from the full sequence as a control.
 | 150 | 63.05% | 69.20% | 76.80% |
 | 200 | 62.75% | 68.80% | 75.80% |
 
+### Middle (k=100)
+
+Selects the middle 100 tokens of the response (centered at midpoint).
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 46.85% | 56.60% | 68.40% |
+| 100 | 46.85% | 56.60% | 68.40% |
+| 150 | 46.55% | 56.40% | 69.40% |
+| 200 | 47.80% | 58.60% | 69.40% |
+
+Checkpoint: `checkpoints/token-select-k100-middle-math-m1.5b-t1.7b/` (on InfraWaves)
+
+### Last (k=100)
+
+Selects the last 100 tokens of the response (tail end).
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 47.00% | 56.40% | 70.40% |
+| 100 | 48.95% | 57.80% | 70.60% |
+| 150 | 49.70% | 58.40% | 69.60% |
+| 200 | 50.35% | 61.60% | 71.00% |
+
+Checkpoint: `checkpoints/token-select-k100-last-math-m1.5b-t1.7b/` (on InfraWaves)
+
 ### Selective vs Positional Comparison (best avg@4, k=100)
 
 | Method | Best Step | avg@4 | maj@4 | pass@4 |
 |--------|-----------|-------|-------|--------|
 | **Pos-100 (prefix)** | **200** | **65.85%** | **70.80%** | **79.80%** |
 | Random-100 | 150 | 63.05% | 69.20% | 76.80% |
+| Full-seq (n1bs16) | 150 | 62.35% | 69.40% | 74.60% |
 | Top-Entropy-Teacher-100 | 150 | 62.20% | 67.80% | 75.80% |
 | Top-Entropy-Student-100 | 100 | 61.35% | 67.20% | 73.20% |
 | Top-KL-100 | 50 | 58.60% | 65.80% | 74.40% |
+| Baseline (no distill) | — | 50.95% | 61.20% | 72.80% |
+| Last-100 | 200 | 50.35% | 61.60% | 71.00% |
+| Middle-100 | 200 | 47.80% | 58.60% | 69.40% |
 
-**Note**: 3 additional experiments are still pending (not yet started training): `fullseq-n1bs16-sglang`, `topkl-k100-hf`, `topkl-k50-sglang`.
+**Note**: Middle-100 and Last-100 both perform **below baseline**, demonstrating that later-position tokens are actively harmful for distillation.
 
 ---
 
@@ -387,6 +446,21 @@ Selects 100 random tokens from the full sequence as a control.
 5. **Sweet spot: pos-50 to pos-200tok** depending on task and training method.
 
 6. **Positional prefix beats selective token methods.** At k=100 tokens, the positional prefix (first 100 tokens) achieves 65.85% avg@4, outperforming all selective methods: random (63.05%), top-entropy-teacher (62.20%), top-entropy-student (61.35%), and top-KL (58.60%). This confirms the **cascade effect hypothesis**: early-token improvements propagate through autoregressive generation, making position more important than raw signal concentration. Notably, top-KL performs worst despite targeting the highest-divergence tokens — likely because it focuses on format/style disagreements rather than reasoning (see `docs/selective_token_analysis.md`).
+
+7. **Middle and last tokens are actively harmful.** Training on middle-100 (46.85%) or last-100 (49.70%) tokens performs **below the undistilled baseline** (50.95%). This demonstrates that later-position teacher supervision is not merely uninformative — it actively degrades student performance. Combined with finding #6, this shows that distillation value is concentrated in the earliest token positions.
+
+8. **Loss clipping does not help.** Full-trajectory training with per-token KL clipped to max=2.0 achieves only 48.80% avg@4 (step 100), well below both the unclipped full-seq (62.35%) and baseline (50.95%). Clipping indiscriminately removes high-KL signal from early positions (strategy selection tokens) along with late-position noise, destroying the most valuable part of the distillation signal. This confirms that the issue is not outlier KL values but rather the position of the signal — positional truncation is a more principled approach than value clipping.
+
+### Loss Clip Experiment
+
+Full-trajectory with per-token KL clipped to 2.0. 1600 problems, 100 steps, HF generate.
+
+| Step | avg@4 | maj@4 | pass@4 |
+|------|-------|-------|--------|
+| 50 | 47.85% | 59.20% | 70.20% |
+| 100 | 48.80% | 58.60% | 72.40% |
+
+Checkpoint: `checkpoints/m1.5b_t1.7b_math_fulltraj_lossclip2_hf_s100_t2048_20260330_105648/` (on InfraWaves)
 
 ---
 

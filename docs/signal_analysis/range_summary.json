@@ -1,0 +1,152 @@
+{
+  "0-50": {
+    "n_tokens": 4952,
+    "n_positions": 50,
+    "logprob_gap": 2.0786632205841453,
+    "kl_forward": 1.2827303797619152,
+    "kl_reverse": 2.0934297235706616,
+    "teacher_entropy": 0.2594471748904179,
+    "teacher_top1_prob": 0.9090219402244926,
+    "agreement_rate": 0.7851373182552503
+  },
+  "50-100": {
+    "n_tokens": 4733,
+    "n_positions": 50,
+    "logprob_gap": 0.9215779197199827,
+    "kl_forward": 1.0208824649152126,
+    "kl_reverse": 0.9407342083168462,
+    "teacher_entropy": 0.2350266762181585,
+    "teacher_top1_prob": 0.9168802634016948,
+    "agreement_rate": 0.8371012043101627
+  },
+  "100-150": {
+    "n_tokens": 4617,
+    "n_positions": 50,
+    "logprob_gap": 0.5434604759360704,
+    "kl_forward": 0.6684617724753666,
+    "kl_reverse": 0.5323316172675282,
+    "teacher_entropy": 0.18116000352379175,
+    "teacher_top1_prob": 0.9359444621058803,
+    "agreement_rate": 0.875893437296946
+  },
+  "150-200": {
+    "n_tokens": 4594,
+    "n_positions": 50,
+    "logprob_gap": 0.43445272323413203,
+    "kl_forward": 0.6080947986213873,
+    "kl_reverse": 0.4309864908069534,
+    "teacher_entropy": 0.1710148748545186,
+    "teacher_top1_prob": 0.940252707589176,
+    "agreement_rate": 0.8950805398345668
+  },
+  "200-300": {
+    "n_tokens": 8861,
+    "n_positions": 100,
+    "logprob_gap": 0.3825677544872468,
+    "kl_forward": 0.5951647278120222,
+    "kl_reverse": 0.37163708072830026,
+    "teacher_entropy": 0.15470903845906303,
+    "teacher_top1_prob": 0.9441353982393715,
+    "agreement_rate": 0.8978670578941429
+  },
+  "300-400": {
+    "n_tokens": 7941,
+    "n_positions": 100,
+    "logprob_gap": 0.3357213390760825,
+    "kl_forward": 0.4731568281482178,
+    "kl_reverse": 0.32638863343786884,
+    "teacher_entropy": 0.11157180415208136,
+    "teacher_top1_prob": 0.9587092452870555,
+    "agreement_rate": 0.9225538345296562
+  },
+  "400-500": {
+    "n_tokens": 6842,
+    "n_positions": 100,
+    "logprob_gap": 0.3363606102760009,
+    "kl_forward": 0.5034201042304656,
+    "kl_reverse": 0.3300159732523817,
+    "teacher_entropy": 0.12695964336310545,
+    "teacher_top1_prob": 0.9550862851585606,
+    "agreement_rate": 0.9187372113417129
+  },
+  "500-600": {
+    "n_tokens": 6170,
+    "n_positions": 100,
+    "logprob_gap": 0.25350780300016473,
+    "kl_forward": 0.3994983335657328,
+    "kl_reverse": 0.2461781716685998,
+    "teacher_entropy": 0.11224545070992675,
+    "teacher_top1_prob": 0.9596208150397437,
+    "agreement_rate": 0.9345218800648298
+  },
+  "600-700": {
+    "n_tokens": 5684,
+    "n_positions": 100,
+    "logprob_gap": 0.20666672703694947,
+    "kl_forward": 0.32167432035261045,
+    "kl_reverse": 0.21427930196366038,
+    "teacher_entropy": 0.09397739809208722,
+    "teacher_top1_prob": 0.9661677109862742,
+    "agreement_rate": 0.9480999296270233
+  },
+  "700-800": {
+    "n_tokens": 5520,
+    "n_positions": 100,
+    "logprob_gap": 0.24905522100916816,
+    "kl_forward": 0.3798158859514437,
+    "kl_reverse": 0.24734663709144797,
+    "teacher_entropy": 0.10622713408552974,
+    "teacher_top1_prob": 0.9616549879380002,
+    "agreement_rate": 0.9391304347826087
+  },
+  "800-900": {
+    "n_tokens": 5356,
+    "n_positions": 100,
+    "logprob_gap": 0.21451958459902262,
+    "kl_forward": 0.33126178867674483,
+    "kl_reverse": 0.21393814926625268,
+    "teacher_entropy": 0.09787994069310767,
+    "teacher_top1_prob": 0.9652738116536904,
+    "agreement_rate": 0.943614637789395
+  },
+  "900-1000": {
+    "n_tokens": 5071,
+    "n_positions": 100,
+    "logprob_gap": 0.24926930602449418,
+    "kl_forward": 0.38195179442086763,
+    "kl_reverse": 0.23560923173921686,
+    "teacher_entropy": 0.12095661629157625,
+    "teacher_top1_prob": 0.9570935832836458,
+    "agreement_rate": 0.9325576809307828
+  },
+  "1000-1200": {
+    "n_tokens": 8800,
+    "n_positions": 200,
+    "logprob_gap": 0.2065356752576066,
+    "kl_forward": 0.2661453502033528,
+    "kl_reverse": 0.1986798082938552,
+    "teacher_entropy": 0.0965195675338462,
+    "teacher_top1_prob": 0.9656038209372624,
+    "agreement_rate": 0.9492045454545455
+  },
+  "1200-1500": {
+    "n_tokens": 11675,
+    "n_positions": 300,
+    "logprob_gap": 0.14597252909829192,
+    "kl_forward": 0.2144721447588582,
+    "kl_reverse": 0.1500506309822023,
+    "teacher_entropy": 0.07868909334890263,
+    "teacher_top1_prob": 0.9712663068971746,
+    "agreement_rate": 0.9560599571734475
+  },
+  "1500-2000": {
+    "n_tokens": 18165,
+    "n_positions": 500,
+    "logprob_gap": 0.11988418759230299,
+    "kl_forward": 0.1974266136656054,
+    "kl_reverse": 0.13100404251890194,
+    "teacher_entropy": 0.05764141310239909,
+    "teacher_top1_prob": 0.979748599093839,
+    "agreement_rate": 0.9667492430498211
+  }
+}

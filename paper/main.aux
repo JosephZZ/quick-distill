@@ -1,0 +1,192 @@
+\relax 
+\providecommand\hyper@newdestlabel[2]{}
+\providecommand\HyField@AuxAddToFields[1]{}
+\providecommand\HyField@AuxAddToCoFields[2]{}
+\citation{agarwal2024onpolicy,gu2024minillm}
+\citation{gu2024minillm,lu2025onpolicy,yang2026beyond}
+\@writefile{toc}{\contentsline {section}{\numberline {1}Introduction}{1}{section.1}\protected@file@percent }
+\newlabel{sec:intro}{{1}{1}{Introduction}{section.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {1}{\ignorespaces \textbf  {Teacher signal quality degrades with position} (100 MATH-500 problems, 1 trajectory each). (a) Reverse KL divergence KL$(p_s \| p_t)$ decays from 2.09 in the first 50 tokens to $\sim $0.24 by position 1000. Dashed line shows the token-level log-prob gap, which nearly coincides with the reverse KL. (b) Teacher entropy drops from 0.26 to 0.12 while teacher-student agreement rises from 79\% to 93\%. At later positions, the teacher is effectively rubber-stamping the student's choices.}}{2}{figure.caption.1}\protected@file@percent }
+\providecommand*\caption@xref[2]{\@setref\relax\@undefined{#1}}
+\newlabel{fig:signal}{{1}{2}{\textbf {Teacher signal quality degrades with position} (100 MATH-500 problems, 1 trajectory each). (a) Reverse KL divergence KL$(p_s \| p_t)$ decays from 2.09 in the first 50 tokens to $\sim $0.24 by position 1000. Dashed line shows the token-level log-prob gap, which nearly coincides with the reverse KL. (b) Teacher entropy drops from 0.26 to 0.12 while teacher-student agreement rises from 79\% to 93\%. At later positions, the teacher is effectively rubber-stamping the student's choices}{figure.caption.1}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {2}Token Reward Quality Analysis by Position}{2}{section.2}\protected@file@percent }
+\newlabel{sec:analysis}{{2}{2}{Token Reward Quality Analysis by Position}{section.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.1}The Conditional Scoring Problem}{2}{subsection.2.1}\protected@file@percent }
+\newlabel{sec:conditional}{{2.1}{2}{The Conditional Scoring Problem}{subsection.2.1}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {2}{\ignorespaces \textbf  {Early tokens encode strategy; later tokens merely execute.} \emph  {Top:} example showing first 100 tokens (blue) establish the approach while last 100 tokens (orange) execute computation. \emph  {Bottom left:} prefix continuation---teacher performance degrades to student baseline by 300 tokens. \emph  {Bottom right:} best-checkpoint accuracy per 100-token region. First-100 yields +14.9pp; middle-100 and last-100 hurt.}}{3}{figure.caption.3}\protected@file@percent }
+\newlabel{fig:example}{{2}{3}{\textbf {Early tokens encode strategy; later tokens merely execute.} \emph {Top:} example showing first 100 tokens (blue) establish the approach while last 100 tokens (orange) execute computation. \emph {Bottom left:} prefix continuation---teacher performance degrades to student baseline by 300 tokens. \emph {Bottom right:} best-checkpoint accuracy per 100-token region. First-100 yields +14.9pp; middle-100 and last-100 hurt}{figure.caption.3}{}}
+\newlabel{fig:continuation}{{2}{3}{\textbf {Early tokens encode strategy; later tokens merely execute.} \emph {Top:} example showing first 100 tokens (blue) establish the approach while last 100 tokens (orange) execute computation. \emph {Bottom left:} prefix continuation---teacher performance degrades to student baseline by 300 tokens. \emph {Bottom right:} best-checkpoint accuracy per 100-token region. First-100 yields +14.9pp; middle-100 and last-100 hurt}{figure.caption.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.2}Per-Position KL Distribution}{3}{subsection.2.2}\protected@file@percent }
+\newlabel{sec:kl_distribution}{{2.2}{3}{Per-Position KL Distribution}{subsection.2.2}{}}
+\@writefile{toc}{\contentsline {paragraph}{Strategy vs.\ execution.}{3}{paragraph*.2}\protected@file@percent }
+\citation{qwen2024qwen25math}
+\citation{qwen2025qwen3}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.3}Test-Time Validation: Prefix Continuation}{4}{subsection.2.3}\protected@file@percent }
+\newlabel{sec:continuation}{{2.3}{4}{Test-Time Validation: Prefix Continuation}{subsection.2.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.4}Training-Time Validation: Position Region Ablation}{4}{subsection.2.4}\protected@file@percent }
+\newlabel{sec:position_ablation}{{2.4}{4}{Training-Time Validation: Position Region Ablation}{subsection.2.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.5}Training Instability as a Consequence}{4}{subsection.2.5}\protected@file@percent }
+\newlabel{sec:degradation}{{2.5}{4}{Training Instability as a Consequence}{subsection.2.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {2.6}Summary of Findings}{4}{subsection.2.6}\protected@file@percent }
+\newlabel{sec:hypothesis}{{2.6}{4}{Summary of Findings}{subsection.2.6}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {3}Method: Positional Distillation}{4}{section.3}\protected@file@percent }
+\newlabel{sec:method}{{3}{4}{Method: Positional Distillation}{section.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {3.1}Formulation}{4}{subsection.3.1}\protected@file@percent }
+\newlabel{eq:full_loss}{{1}{4}{Formulation}{equation.3.1}{}}
+\newlabel{eq:pos_loss}{{2}{4}{Formulation}{equation.3.2}{}}
+\citation{hu2022lora}
+\citation{hendrycks2021measuring,lightman2023verify}
+\citation{chen2021evaluating,austin2021program,liu2024evalplus}
+\citation{yan2024bfcl}
+\@writefile{lot}{\contentsline {table}{\numberline {1}{\ignorespaces \textbf  {Main results.} Best performance across training steps for each configuration. \textbf  {Bold}: best per teacher. Full-seq results use the best step before degradation. Time: seconds per training step (gen + score + train). Gemma uses gemma-2-2b-it student $\rightarrow $ gemma-3-4b-it teacher.}}{5}{table.caption.7}\protected@file@percent }
+\newlabel{tab:main_results}{{1}{5}{\textbf {Main results.} Best performance across training steps for each configuration. \textbf {Bold}: best per teacher. Full-seq results use the best step before degradation. Time: seconds per training step (gen + score + train). Gemma uses gemma-2-2b-it student $\rightarrow $ gemma-3-4b-it teacher}{table.caption.7}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {4}Generalization Experiments}{5}{section.4}\protected@file@percent }
+\newlabel{sec:experiments}{{4}{5}{Generalization Experiments}{section.4}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.1}Setup}{5}{subsection.4.1}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Models.}{5}{paragraph*.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Training.}{5}{paragraph*.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Evaluation.}{5}{paragraph*.6}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.2}Main Results}{5}{subsection.4.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Results.}{5}{paragraph*.8}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {2}{\ignorespaces \textbf  {Training efficiency.} Per-step time and peak GPU memory on a single A6000 (48GB).}}{6}{table.caption.10}\protected@file@percent }
+\newlabel{tab:timing}{{2}{6}{\textbf {Training efficiency.} Per-step time and peak GPU memory on a single A6000 (48GB)}{table.caption.10}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {3}{\ignorespaces \textbf  {Full-sequence distillation degrades on coding.} On HumanEval, full-seq drops from 40.2\% to 26.8\% ($-$33\%) over 400 training steps, while first-100 positional distillation remains stable above baseline.}}{6}{figure.caption.11}\protected@file@percent }
+\newlabel{fig:degradation}{{3}{6}{\textbf {Full-sequence distillation degrades on coding.} On HumanEval, full-seq drops from 40.2\% to 26.8\% ($-$33\%) over 400 training steps, while first-100 positional distillation remains stable above baseline}{figure.caption.11}{}}
+\@writefile{toc}{\contentsline {paragraph}{Cascade effect.}{6}{paragraph*.9}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.3}Training Stability}{6}{subsection.4.3}\protected@file@percent }
+\newlabel{sec:stability}{{4.3}{6}{Training Stability}{subsection.4.3}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {4.4}Efficiency}{6}{subsection.4.4}\protected@file@percent }
+\newlabel{sec:efficiency}{{4.4}{6}{Efficiency}{subsection.4.4}{}}
+\@writefile{lof}{\contentsline {figure}{\numberline {4}{\ignorespaces \textbf  {Position limit sweep on MATH-500.} Best avg@4 across training steps for each $N$. Performance increases monotonically and surpasses full-seq (dashed orange) at $N{\geq }150$. Even $N{=}5$ provides +5.5pp over baseline (dashed gray).}}{7}{figure.caption.12}\protected@file@percent }
+\newlabel{fig:pos_sweep}{{4}{7}{\textbf {Position limit sweep on MATH-500.} Best avg@4 across training steps for each $N$. Performance increases monotonically and surpasses full-seq (dashed orange) at $N{\geq }150$. Even $N{=}5$ provides +5.5pp over baseline (dashed gray)}{figure.caption.12}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {5}Ablation Experiments}{7}{section.5}\protected@file@percent }
+\newlabel{sec:ablation}{{5}{7}{Ablation Experiments}{section.5}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.1}Position Limit Sweep}{7}{subsection.5.1}\protected@file@percent }
+\newlabel{sec:pos_sweep}{{5.1}{7}{Position Limit Sweep}{subsection.5.1}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.2}Token Selection Strategy Comparison}{7}{subsection.5.2}\protected@file@percent }
+\newlabel{sec:token_selection}{{5.2}{7}{Token Selection Strategy Comparison}{subsection.5.2}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {5.3}LoRA vs.\ Full Fine-Tuning}{7}{subsection.5.3}\protected@file@percent }
+\newlabel{sec:lora_vs_fullft}{{5.3}{7}{LoRA vs.\ Full Fine-Tuning}{subsection.5.3}{}}
+\@writefile{toc}{\contentsline {paragraph}{Additional student-teacher pairs.}{7}{paragraph*.15}\protected@file@percent }
+\citation{hinton2015distilling}
+\citation{kim2016sequence}
+\citation{gu2024minillm}
+\citation{agarwal2024onpolicy}
+\citation{ko2024distillm}
+\citation{wen2023fdivergence}
+\citation{wu2025rethinking}
+\citation{xu2025speculative}
+\citation{agarwal2024onpolicy}
+\citation{gu2024minillm}
+\@writefile{lof}{\contentsline {figure}{\numberline {5}{\ignorespaces \textbf  {Token selection strategies} ($k{=}100$, best avg@4). Prefix (first 100 tokens) outperforms all alternatives. Top-KL and top-entropy strategies select tokens with the highest signal concentration (95\%+ of total KL/entropy) but these tokens are at later positions (mean pos.\ 240--313) where the teacher signal is harmful. Random-100 outperforms all ``smart'' strategies except prefix by statistically avoiding later positions.}}{8}{figure.caption.13}\protected@file@percent }
+\newlabel{fig:token_select}{{5}{8}{\textbf {Token selection strategies} ($k{=}100$, best avg@4). Prefix (first 100 tokens) outperforms all alternatives. Top-KL and top-entropy strategies select tokens with the highest signal concentration (95\%+ of total KL/entropy) but these tokens are at later positions (mean pos.\ 240--313) where the teacher signal is harmful. Random-100 outperforms all ``smart'' strategies except prefix by statistically avoiding later positions}{figure.caption.13}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {3}{\ignorespaces \textbf  {LoRA vs.\ full fine-tuning.} Best performance across training steps. Qwen2.5-Math-1.5B $\rightarrow $ Qwen3-1.7B, $n{=}1$, bs=16.}}{8}{table.caption.14}\protected@file@percent }
+\newlabel{tab:lora_ft}{{3}{8}{\textbf {LoRA vs.\ full fine-tuning.} Best performance across training steps. Qwen2.5-Math-1.5B $\rightarrow $ Qwen3-1.7B, $n{=}1$, bs=16}{table.caption.14}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {6}Related Work}{8}{section.6}\protected@file@percent }
+\newlabel{sec:related_work}{{6}{8}{Related Work}{section.6}{}}
+\@writefile{toc}{\contentsline {paragraph}{Knowledge Distillation for Language Models.}{8}{paragraph*.16}\protected@file@percent }
+\citation{wang2025beyond8020}
+\citation{vassoyan2025ignorekl}
+\citation{li2025preplan}
+\citation{singh2026functional}
+\citation{huang2025selectkd}
+\citation{xie2026adakd}
+\citation{tavor2026rethinking}
+\citation{kim2026tsdkd}
+\citation{holtzman2020curious}
+\citation{shumailov2024collapse}
+\citation{jang2026veto}
+\citation{chen2025distillingessence}
+\citation{yan2026dasd}
+\citation{bengio2009curriculum}
+\citation{bengio2015scheduled}
+\citation{li2022stability}
+\citation{pouransari2024dataset}
+\@writefile{toc}{\contentsline {paragraph}{Token-Level Importance in Distillation and Reasoning.}{9}{paragraph*.17}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Training Stability and Sequence-Level Issues.}{9}{paragraph*.18}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Curriculum Learning and Sequence Scheduling.}{9}{paragraph*.19}\protected@file@percent }
+\citation{deepseekr1}
+\citation{wei2022chainofthought}
+\bibstyle{plainnat}
+\bibdata{references_extended}
+\bibcite{agarwal2024onpolicy}{{1}{2024}{{Agarwal et~al.}}{{Agarwal, Vieillard, Zhou, Stanczyk, Ramos, Geist, and Bachem}}}
+\@writefile{toc}{\contentsline {paragraph}{Reasoning Distillation.}{10}{paragraph*.20}\protected@file@percent }
+\@writefile{toc}{\contentsline {section}{\numberline {7}Discussion}{10}{section.7}\protected@file@percent }
+\newlabel{sec:discussion}{{7}{10}{Discussion}{section.7}{}}
+\@writefile{toc}{\contentsline {paragraph}{The conditional scoring problem is fundamental.}{10}{paragraph*.21}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Broader implications.}{10}{paragraph*.22}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Limitations.}{10}{paragraph*.23}\protected@file@percent }
+\@writefile{toc}{\contentsline {paragraph}{Conclusion.}{10}{paragraph*.24}\protected@file@percent }
+\bibcite{austin2021program}{{2}{2021}{{Austin et~al.}}{{Austin, Odena, Nye, Bosma, Michalewski, Dohan, Jiang, Cai, Terry, Le, et~al.}}}
+\bibcite{bengio2015scheduled}{{3}{2015}{{Bengio et~al.}}{{Bengio, Vinyals, Jaitly, and Shazeer}}}
+\bibcite{bengio2009curriculum}{{4}{2009}{{Bengio et~al.}}{{Bengio, Louradour, Collobert, and Weston}}}
+\bibcite{chen2021evaluating}{{5}{2021}{{Chen et~al.}}{{Chen, Tworek, Jun, Yuan, Pinto, Kaplan, Edwards, Burda, Joseph, Brockman, et~al.}}}
+\bibcite{chen2025distillingessence}{{6}{2025}{{Chen et~al.}}{{Chen, Kothapalli, Fatahibaarzi, Sang, Tang, Song, Wang, and Abdul-Mageed}}}
+\bibcite{deepseekr1}{{7}{2025}{{DeepSeek-AI}}{{}}}
+\bibcite{gu2024minillm}{{8}{2024}{{Gu et~al.}}{{Gu, Dong, Wei, and Huang}}}
+\bibcite{hendrycks2021measuring}{{9}{2021}{{Hendrycks et~al.}}{{Hendrycks, Burns, Kadavath, Arora, Basart, Tang, Song, and Steinhardt}}}
+\bibcite{hinton2015distilling}{{10}{2015}{{Hinton et~al.}}{{Hinton, Vinyals, and Dean}}}
+\bibcite{holtzman2020curious}{{11}{2020}{{Holtzman et~al.}}{{Holtzman, Buys, Du, Forbes, and Choi}}}
+\bibcite{hu2022lora}{{12}{2022}{{Hu et~al.}}{{Hu, Shen, Wallis, Allen-Zhu, Li, Wang, Wang, and Chen}}}
+\bibcite{huang2025selectkd}{{13}{2025}{{Huang et~al.}}{{Huang, Song, Zhang, and Ren}}}
+\bibcite{jang2026veto}{{14}{2026}{{Jang et~al.}}{{Jang, Yeom, Yeo, Lim, and Kim}}}
+\bibcite{kim2026tsdkd}{{15}{2026}{{Kim and Baek}}{{}}}
+\bibcite{kim2016sequence}{{16}{2016}{{Kim and Rush}}{{}}}
+\bibcite{ko2024distillm}{{17}{2024}{{Ko et~al.}}{{Ko, Kim, Chen, and Yun}}}
+\bibcite{li2022stability}{{18}{2022}{{Li et~al.}}{{Li, Zhang, and He}}}
+\bibcite{li2025preplan}{{19}{2025}{{Li et~al.}}{{Li, Dong, Sun, Wang, Xiong, Luo, Liu, Lu, Wang, Su, Zheng, and Yan}}}
+\bibcite{lightman2023verify}{{20}{2023}{{Lightman et~al.}}{{Lightman, Kosaraju, Burda, Edwards, Baker, Lee, Leike, Schulman, Sutskever, and Cobbe}}}
+\bibcite{liu2024evalplus}{{21}{2024}{{Liu et~al.}}{{Liu, Xia, Wang, and Zhang}}}
+\bibcite{lu2025onpolicy}{{22}{2025}{{Lu et~al.}}{{Lu, Chen, Gulcehre, et~al.}}}
+\bibcite{pouransari2024dataset}{{23}{2024}{{Pouransari et~al.}}{{Pouransari, Li, Chang, Vasu, Koc, Shankar, and Tuzel}}}
+\bibcite{qwen2024qwen25math}{{24}{2024}{{Qwen Team}}{{}}}
+\bibcite{qwen2025qwen3}{{25}{2025}{{Qwen Team}}{{}}}
+\bibcite{shumailov2024collapse}{{26}{2024}{{Shumailov et~al.}}{{Shumailov, Shumaylov, Zhao, Papernot, Anderson, and Gal}}}
+\bibcite{singh2026functional}{{27}{2026}{{Singh and Hakkani-T{\"u}r}}{{}}}
+\bibcite{tavor2026rethinking}{{28}{2026}{{Tavor et~al.}}{{Tavor, Ebenspanger, Cnaan, and Geva}}}
+\bibcite{vassoyan2025ignorekl}{{29}{2025}{{Vassoyan et~al.}}{{Vassoyan, Beau, and Plaud}}}
+\bibcite{wang2025beyond8020}{{30}{2025}{{Wang et~al.}}{{Wang, Yu, Gao, Zheng, Liu, Lu, Dang, Chen, Yang, Zhang, Liu, Yang, Zhao, Yue, Song, Yu, Huang, and Lin}}}
+\bibcite{wei2022chainofthought}{{31}{2022}{{Wei et~al.}}{{Wei, Wang, Schuurmans, Bosma, Ichter, Xia, Chi, Le, and Zhou}}}
+\bibcite{wen2023fdivergence}{{32}{2023}{{Wen et~al.}}{{Wen, Li, Du, and Mou}}}
+\bibcite{wu2025rethinking}{{33}{2025}{{Wu et~al.}}{{Wu, Tao, Wang, Yang, Zhao, and Wong}}}
+\bibcite{xie2026adakd}{{34}{2026}{{Xie et~al.}}{{Xie, Xue, Wu, Li, Wang, Hu, Liu, and Zhang}}}
+\bibcite{xu2025speculative}{{35}{2025}{{Xu et~al.}}{{Xu, Han, Wang, Le, Madeka, Li, Wang, Agarwal, Lee, and Pfister}}}
+\bibcite{yan2024bfcl}{{36}{2024}{{Yan et~al.}}{{Yan, Mao, Ji, Zhang, Patil, Stoica, and Gonzalez}}}
+\bibcite{yan2026dasd}{{37}{2026}{{Yan et~al.}}{{Yan, Liu, Shen, Wang, Fan, Zhang, Wu, Wang, and Ye}}}
+\bibcite{yang2026beyond}{{38}{2026}{{Yang et~al.}}{{Yang, Liu, Xie, Yang, Yang, and Lin}}}
+\@writefile{toc}{\contentsline {section}{\numberline {A}Training Efficiency}{13}{appendix.A}\protected@file@percent }
+\newlabel{app:timing}{{A}{13}{Training Efficiency}{appendix.A}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {4}{\ignorespaces \textbf  {Training efficiency.} Per-step wall-clock time on a single A6000 (48GB). Student: Qwen2.5-Math-1.5B, LoRA, bs=16.}}{13}{table.caption.25}\protected@file@percent }
+\newlabel{tab:timing}{{4}{13}{\textbf {Training efficiency.} Per-step wall-clock time on a single A6000 (48GB). Student: Qwen2.5-Math-1.5B, LoRA, bs=16}{table.caption.25}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {B}Additional Student-Teacher Pairs}{13}{appendix.B}\protected@file@percent }
+\newlabel{app:additional_pairs}{{B}{13}{Additional Student-Teacher Pairs}{appendix.B}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {C}Full Experimental Results}{13}{appendix.C}\protected@file@percent }
+\newlabel{app:full_results}{{C}{13}{Full Experimental Results}{appendix.C}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.1}Math Results: Per-Step Performance}{13}{subsection.C.1}\protected@file@percent }
+\@writefile{lot}{\contentsline {table}{\numberline {5}{\ignorespaces \textbf  {Additional student-teacher pairs.} All use pos-100, LoRA, 3,200 problems.}}{14}{table.caption.26}\protected@file@percent }
+\newlabel{tab:additional_pairs}{{5}{14}{\textbf {Additional student-teacher pairs.} All use pos-100, LoRA, 3,200 problems}{table.caption.26}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {6}{\ignorespaces \textbf  {MATH-500 per-step results.} LoRA, $n{=}1$, $\text  {bs}{=}16$, 3,200 problems. Baseline: 50.95\% avg@4.}}{14}{table.caption.27}\protected@file@percent }
+\newlabel{tab:app_math_main}{{6}{14}{\textbf {MATH-500 per-step results.} LoRA, $n{=}1$, $\text {bs}{=}16$, 3,200 problems. Baseline: 50.95\% avg@4}{table.caption.27}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {7}{\ignorespaces \textbf  {Complete MATH-500 results, LoRA, $n{=}16$, $\text  {bs}{=}16$.} Best per configuration in \textbf  {bold}.}}{14}{table.caption.28}\protected@file@percent }
+\newlabel{tab:app_math_n16}{{7}{14}{\textbf {Complete MATH-500 results, LoRA, $n{=}16$, $\text {bs}{=}16$.} Best per configuration in \textbf {bold}}{table.caption.28}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {8}{\ignorespaces \textbf  {Complete coding results, LoRA.} HumanEval (HE) and MBPP pass@1.}}{15}{table.caption.29}\protected@file@percent }
+\newlabel{tab:app_coding_lora}{{8}{15}{\textbf {Complete coding results, LoRA.} HumanEval (HE) and MBPP pass@1}{table.caption.29}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {9}{\ignorespaces \textbf  {Function calling results (BFCL), LoRA.} Name accuracy / Full accuracy / Parse rate. Best full\_acc in \textbf  {bold}.}}{15}{table.caption.30}\protected@file@percent }
+\newlabel{tab:app_funcall}{{9}{15}{\textbf {Function calling results (BFCL), LoRA.} Name accuracy / Full accuracy / Parse rate. Best full\_acc in \textbf {bold}}{table.caption.30}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {10}{\ignorespaces \textbf  {Scaling results.} All use pos-100, LoRA, 3,200 problems. Best across training steps. Baseline performance shown for reference.}}{15}{table.caption.31}\protected@file@percent }
+\newlabel{tab:app_scaling}{{10}{15}{\textbf {Scaling results.} All use pos-100, LoRA, 3,200 problems. Best across training steps. Baseline performance shown for reference}{table.caption.31}{}}
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.2}Math Results: Earlier Series ($n{=}16$, 200 problems)}{16}{subsection.C.2}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.3}Coding Results}{16}{subsection.C.3}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.4}Function Calling Results}{16}{subsection.C.4}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.5}Scaling Experiment Results}{16}{subsection.C.5}\protected@file@percent }
+\@writefile{toc}{\contentsline {subsection}{\numberline {C.6}Full-Sequence Degradation Details}{16}{subsection.C.6}\protected@file@percent }
+\newlabel{app:fullseq_degradation}{{C.6}{16}{Full-Sequence Degradation Details}{subsection.C.6}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {11}{\ignorespaces \textbf  {Boxed repetition progression} in full-sequence LoRA distillation on MATH-500 ($n{=}16$, $\text  {bs}{=}16$).}}{16}{table.caption.32}\protected@file@percent }
+\newlabel{tab:app_boxed}{{11}{16}{\textbf {Boxed repetition progression} in full-sequence LoRA distillation on MATH-500 ($n{=}16$, $\text {bs}{=}16$)}{table.caption.32}{}}
+\@writefile{toc}{\contentsline {section}{\numberline {D}Token Classification Methodology}{16}{appendix.D}\protected@file@percent }
+\newlabel{app:token_classification}{{D}{16}{Token Classification Methodology}{appendix.D}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {12}{\ignorespaces \textbf  {Mean KL by token category and position range.}}}{16}{table.caption.33}\protected@file@percent }
+\newlabel{tab:app_kl_by_category}{{12}{16}{\textbf {Mean KL by token category and position range.}}{table.caption.33}{}}
+\@writefile{lot}{\contentsline {table}{\numberline {13}{\ignorespaces \textbf  {Top 20 highest-KL tokens} (minimum 50 occurrences across 10,000 trajectories).}}{17}{table.caption.34}\protected@file@percent }
+\newlabel{tab:app_high_kl_tokens}{{13}{17}{\textbf {Top 20 highest-KL tokens} (minimum 50 occurrences across 10,000 trajectories)}{table.caption.34}{}}
+\gdef \@abspage@last{17}

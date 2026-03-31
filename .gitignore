@@ -22,3 +22,5 @@ env/
 # Notebooks
 *.ipynb
 
+paper/.claudeprism
+paper/.prism
