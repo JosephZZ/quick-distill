@@ -179,11 +179,11 @@ Figure~\ref{fig:example} illustrates this with a concrete example. The student's
 \centering
 \small
 \fbox{\parbox{0.95\textwidth}{
-\textbf{Problem:} Convert $(0,3)$ from rectangular to polar coordinates. \\[4pt]
-\colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's solve the problem step-by-step. \textbf{1. Understand the Conversion Formulae:} The radius $r$ in polar coordinates is given by $r = \sqrt{x^2+y^2}$. The angle $\theta$ is given by $\theta = \arctan(y/x)$, but we need to adjust for the correct quadrant. \textbf{2. Identify}...''}} \\[4pt]
-\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Tokens 101+ (execution):} ``...the Rectangular Coordinates: The given point is $(0,3)$. \textbf{3. Calculate $r$:} $r = \sqrt{0^2+3^2} = \sqrt{9} = 3$. \textbf{4. Determine $\theta$:} Since $x=0$ and $y=3$, the point lies on the positive y-axis. $\theta = \pi/2$.''}}
+\textbf{Problem:} In a certain isosceles right triangle, the altitude to the hypotenuse has length $4\sqrt{2}$. What is the area of the triangle? \\[4pt]
+\colorbox{blue!10}{\parbox{0.93\textwidth}{\textbf{First 100 tokens (strategy):} ``Let's start by understanding the problem. In an isosceles right triangle, the two legs are of equal length, and the hypotenuse is $\sqrt{2}$ times the length of a leg. If we denote the length of each leg by $a$, then the hypotenuse will be $a\sqrt{2}$. The altitude to the hypotenuse in an isosceles right triangle is half the length of a leg, because the altitude bisects the...''}} \\[4pt]
+\colorbox{orange!10}{\parbox{0.93\textwidth}{\textbf{Last 100 tokens (execution):} ``...Solving for $a$, we get: $a\sqrt{2} = 8\sqrt{2} \implies a = 8$. So, the length of each leg of the triangle is 8. The area of the triangle is given by: Area $= \frac{1}{2} \times \text{base} \times \text{height} = \frac{1}{2} \times 8 \times 8 = \boxed{32}$''}}
 }}
-\caption{\textbf{Strategy vs.\ execution in a student response.} The first $\sim$100 tokens (blue) establish the solution approach---which formulas to use, what to check. Tokens 101 onward (orange) execute the computation by substituting values and simplifying. Distillation on the strategy portion is sufficient because the student can already compute once it knows the approach.}
+\caption{\textbf{Strategy vs.\ execution in a student response.} The first 100 tokens (blue) establish the solution approach---defining variables, identifying geometric relationships, choosing a formula. The last 100 tokens (orange) execute the computation---solving the equation and computing the final answer. The teacher and student disagree most on the strategy portion (mean KL $\approx$ 1.7) and largely agree on execution (mean KL $\approx$ 0.4).}
 \label{fig:example}
 \end{figure}
 
