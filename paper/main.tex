@@ -76,15 +76,9 @@ Our contributions are:
 
 
 % ============================================================================
-% 2. RELATED WORK
+% 2. SIGNAL QUALITY ANALYSIS
 % ============================================================================
-\input{related_work_section}
-
-
-% ============================================================================
-% 3. SIGNAL QUALITY ANALYSIS
-% ============================================================================
-\section{Teacher Signal Quality Analysis}
+\section{Token Reward Quality Analysis by Position}
 \label{sec:analysis}
 
 We analyze the quality of the teacher's per-token supervision signal across positions in student-generated trajectories. All analysis in this section uses Qwen2.5-Math-1.5B as the student and Qwen3-1.7B as the teacher on MATH-500, with 59,936 on-policy trajectories (mean length 386 tokens).
@@ -188,10 +182,27 @@ Figure~\ref{fig:example} illustrates this with a concrete example. The student's
 \end{figure}
 
 
-\subsection{Position Region Ablation}
+\subsection{Prefix Continuation: Early Tokens Determine the Trajectory}
+\label{sec:continuation}
+
+To directly test whether early tokens determine the quality of the full response, we evaluate prefix continuation on MATH-500: given a prefix of $L$ tokens from one model, the other model generates the continuation. Figure~\ref{fig:continuation} shows the results.
+
+\begin{figure}[t]
+    \centering
+    \includegraphics[width=0.48\textwidth]{figures/fig_continuation.pdf}
+    \caption{\textbf{Prefix continuation on MATH-500.} Performance is dominated by the continuation model, but degrades as the prefix gets longer and locks in the reasoning trajectory.}
+    \label{fig:continuation}
+\end{figure}
+
+With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its own baseline of 65.30\%. At 200 tokens, performance drops to 56.30\%; at 300 tokens, it falls to 51.75\% (the student baseline). The student's reasoning choices become entrenched and the teacher cannot recover. Conversely, with a 100-token teacher prefix, the student achieves only 47.00\%---\emph{below} its own baseline---due to style mismatch between the models.
+
+This reveals that performance is dominated by the continuation model, not the prefix. A strong continuator (teacher) can partially recover from a weak prefix---but only if the prefix is short. The rapid degradation from 62.70\% to 51.75\% quantifies the \emph{window of effective influence}: the first $\sim$100 tokens are where reasoning strategy is still malleable.
+
+
+\subsection{Training on Different Positions}
 \label{sec:position_ablation}
 
-The signal quality analysis predicts that early-position training should be most effective and later-position training should be harmful. We test this directly by training on different 100-token regions of the trajectory.
+The analysis above predicts that early-position training should be most effective and later-position training should be harmful. We test this directly by training on different 100-token regions of the trajectory.
 
 \begin{table}[t]
 \centering
@@ -252,9 +263,9 @@ In practice, we both restrict the loss \emph{and} truncate the rollout to $N$ to
 
 
 % ============================================================================
-% 5. EXPERIMENTS
+% 4. GENERALIZATION EXPERIMENTS
 % ============================================================================
-\section{Experiments}
+\section{Generalization Experiments}
 \label{sec:experiments}
 
 \subsection{Setup}
@@ -325,6 +336,12 @@ This supports our hypothesis from Section~\ref{sec:hypothesis}: restricting loss
 
 \paragraph{Efficiency.} \Method{} achieves 21--35$\times$ wall-clock speedup (Table~\ref{tab:timing} in Appendix). For 200 training steps, \method{} completes in $\sim$27 minutes versus 9--40 hours for full-sequence distillation on a single A6000 (48GB). The dominant cost in full-seq is autoregressive generation ($\sim$280s/step); \method{} generates only 100 tokens ($\sim$8s/step). Additionally, \method{} requires no inference server (vLLM/SGLang), since 100 tokens can be generated via standard HF generate.
 
+% ============================================================================
+% 5. ABLATION EXPERIMENTS
+% ============================================================================
+\section{Ablation Experiments}
+\label{sec:ablation}
+
 \subsection{Position Limit Sweep}
 \label{sec:pos_sweep}
 
@@ -363,30 +380,17 @@ The results reveal a robust sweet spot at $N = 50$--$200$, where performance sat
 A natural concern is that distilling only the first $N$ tokens might only improve those specific positions. We find strong evidence to the contrary: early-token distillation creates a \emph{cascade effect} that reshapes the entire trajectory. Comparing distilled and base model responses, late tokens (which receive zero distillation signal) change just as much as early tokens (Jaccard similarity to baseline = 0.251 for both halves). Moreover, pos-200 reduces KL by 50--60\% within the trained range (positions 0--200) and by 30--40\% in the \emph{untrained} range (positions 200--400). This is consistent with autoregressive generation: better early decisions propagate through the entire response.
 
 
-\subsection{Prefix Continuation Analysis}
-\label{sec:continuation}
-
-To directly test the relationship between prefix quality and continuation quality, we evaluate prefix continuation on the full MATH-500 benchmark: given a prefix of $L$ tokens from one model, the other model generates the continuation. Figure~\ref{fig:continuation} shows the results.
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=0.48\textwidth]{figures/fig_continuation.pdf}
-    \caption{\textbf{Prefix continuation on MATH-500.} Performance is dominated by the continuation model, but degrades as the prefix gets longer and locks in the reasoning trajectory.}
-    \label{fig:continuation}
-\end{figure}
-
-\paragraph{Teacher continuing from student prefix.} With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its own baseline of 65.30\%. The teacher can largely recover from a short student prefix. At 200 tokens, performance drops to 56.30\%: the student's reasoning choices become entrenched. At 300 tokens, performance falls to 51.75\%, essentially at the student baseline---the teacher cannot recover once the student has committed to a solution path.
-
-\paragraph{Student continuing from teacher prefix.} With a 100-token teacher prefix, the student achieves only 47.00\%---\emph{below} its own baseline of 50.95\%. The teacher's different style (markdown headings, \texttt{\$\$} math blocks) confuses the student. At 300 tokens, performance recovers to 52.65\% as the teacher completes enough reasoning that the student only needs to finish the computation.
-
-\paragraph{Implications.} The teacher's continuation ability (62.70\% from a student prefix) far exceeds the student's continuation ability (47.00\% from a teacher prefix). A good prefix cannot compensate for weak continuation, but a strong continuator can partially recover from a weak prefix---if the prefix is short enough. The rapid degradation from 62.70\% (prefix=100) to 51.75\% (prefix=300) directly quantifies the window of effective distillation: early tokens are where the teacher can most influence the trajectory, before the student's choices become load-bearing.
-
-
 \paragraph{Additional student-teacher pairs.} We evaluate with Qwen3-1.7B and Qwen3-4B as students (with 4B and 8B teachers). Distillation is most effective when the student has significant room for improvement: Qwen3-1.7B gains +13.9pp on BFCL from a 4B teacher. Stronger students show diminishing returns (Appendix~\ref{app:additional_pairs}).
 
 
 % ============================================================================
-% 7. DISCUSSION AND CONCLUSION
+% RELATED WORK
+% ============================================================================
+\input{related_work_section}
+
+
+% ============================================================================
+% DISCUSSION AND CONCLUSION
 % ============================================================================
 \section{Discussion}
 \label{sec:discussion}
