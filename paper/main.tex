@@ -229,7 +229,7 @@ Table~\ref{tab:position_region} confirms the prediction. First-100 improves avg@
 \subsection{Training Instability as a Consequence}
 \label{sec:degradation}
 
-The signal quality analysis explains a widely observed but poorly understood phenomenon: full-sequence on-policy distillation often degrades with continued training. On coding tasks (HumanEval), full-sequence distillation with LoRA peaks at 40.24\% at step 50 then drops to 26.83\% by step 400---a 33\% relative decline. On MATH-500 with $n{=}16$, students develop degenerate \bboxed{} repetition patterns. These degradation patterns are consistent with accumulated exposure to low-quality later-position signals: over many training steps, the noisy gradients from later positions distort the student's parameters. Positional distillation eliminates this degradation by never computing loss on these positions (Section~\ref{sec:stability}).
+The signal quality analysis explains a widely observed but poorly understood phenomenon: full-sequence on-policy distillation often degrades with continued training. On coding tasks (HumanEval), full-sequence distillation with LoRA peaks at 40.24\% at step 50 then drops to 26.83\% by step 400---a 33\% relative decline. On MATH-500, full-sequence distillation plateaus at 62.35\% avg@4 while positional distillation reaches 66.65\%. These degradation patterns are consistent with accumulated exposure to low-quality later-position signals. Positional distillation eliminates this degradation by never computing loss on these positions (Section~\ref{sec:stability}).
 
 \subsection{Summary of Findings}
 \label{sec:hypothesis}
@@ -293,7 +293,7 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \midrule
 --- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- \\
 \midrule
-\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 65.55 & 40.24 & 52.65 & 58.20 & ${\sim}$280 \\
+\multirow{2}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & 7.67 & ${\sim}$280 \\
  & \textbf{Ours ($N{=}100$)} & \textbf{65.85} & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
 \midrule
 \multirow{2}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
@@ -319,7 +319,28 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 As shown in Figure~\ref{fig:analysis}c, full-sequence distillation degrades on coding tasks: HumanEval drops from 40.24\% to 26.83\% (a 33\% relative decline), while MATH-500 develops catastrophic \bboxed{} repetition. In contrast, \method{} maintains stable or improving accuracy across all checkpoints and tasks. The range between best and worst steps for \method{} is typically 1--3 percentage points, compared to 13--22 points for full-sequence. This is a direct consequence of the signal quality analysis (Section~\ref{sec:analysis}): restricting loss to high-quality early positions avoids the harmful later-position signals that accumulate over training.
 
 
-\paragraph{Efficiency.} \Method{} achieves 21--35$\times$ wall-clock speedup (Table~\ref{tab:timing} in Appendix). For 200 training steps, \method{} completes in $\sim$27 minutes versus 9--40 hours for full-sequence distillation on a single A6000 (48GB). The dominant cost in full-seq is autoregressive generation ($\sim$280s/step); \method{} generates only 100 tokens ($\sim$8s/step). Additionally, \method{} requires no inference server (vLLM/SGLang), since 100 tokens can be generated via standard HF generate.
+\subsection{Efficiency}
+\label{sec:efficiency}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Training efficiency.} Per-step time and peak GPU memory on a single A6000 (48GB).}
+\label{tab:timing}
+\small
+\begin{tabular}{llccc}
+\toprule
+\textbf{Teacher} & \textbf{Method} & \textbf{Time/step} & \textbf{Peak GPU mem} & \textbf{Total (200 steps)} \\
+\midrule
+\multirow{2}{*}{Q3-1.7B} & Full-seq & ${\sim}$280s & 43 GB (vLLM) & ${\sim}$16 hours \\
+ & Ours ($N{=}100$) & ${\sim}$8s & 8 GB (HF) & ${\sim}$27 min \\
+\midrule
+\multirow{2}{*}{Q3-4B} & Full-seq & ${\sim}$210s & 46 GB (vLLM) & ${\sim}$12 hours \\
+ & Ours ($N{=}100$) & ${\sim}$8s & 12 GB (HF) & ${\sim}$27 min \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:timing} shows that \method{} achieves 26--35$\times$ wall-clock speedup. The dominant cost in full-seq is autoregressive generation ($\sim$280s/step for sequences averaging $\sim$1000 tokens); \method{} generates only 100 tokens ($\sim$8s/step). \Method{} also requires significantly less GPU memory because it does not need a vLLM/SGLang inference server---100 tokens can be generated via standard HF generate, enabling training on a single consumer GPU.
 
 % ============================================================================
 % 5. ABLATION EXPERIMENTS
@@ -334,28 +355,26 @@ How sensitive is \method{} to the choice of $N$? Table~\ref{tab:pos_sweep} prese
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Position limit sweep on MATH-500.} LoRA, Qwen2.5-Math-1.5B $\rightarrow$ Qwen3-1.7B. Two configs: $n{=}16$ (200 problems) and $n{=}1$ (3,200 problems). Best avg@4 across all training steps. Baseline: 50.95\%.}
+\caption{\textbf{Position limit sweep on MATH-500.} LoRA, Qwen2.5-Math-1.5B $\rightarrow$ Qwen3-1.7B, $n{=}1$, 3,200 problems. Best avg@4 across all training steps. Baseline: 50.95\%.}
 \label{tab:pos_sweep}
 \small
-\begin{tabular}{ccccc}
+\begin{tabular}{ccc}
 \toprule
-\textbf{Pos.\ limit $N$} & \textbf{\% KL signal} & \textbf{Best avg@4 ($n{=}16$)} & \textbf{Best avg@4 ($n{=}1$)} & \textbf{\% max gain ($n{=}16$)} \\
+\textbf{Pos.\ limit $N$} & \textbf{\% KL signal} & \textbf{Best avg@4} \\
 \midrule
-5 & 5.2\% & 56.50\% & --- & 35\% \\
-10 & 7.8\% & 59.50\% & --- & 54\% \\
-20 & 12.2\% & 60.20\% & --- & 58\% \\
-50 & 26.2\% & 62.45\% & 66.65\% & 73\% \\
-100 & 43.9\% & 64.25\% & 65.85\% & 84\% \\
-150 & --- & 65.70\% & 66.65\% & 93\% \\
-200 & 66.1\% & 66.75\% & 66.05\% & 100\% \\
+50 & 26.2\% & 66.65\% \\
+100 & 43.9\% & 65.85\% \\
+150 & --- & 66.65\% \\
+200 & 66.1\% & 66.05\% \\
 \midrule
-Full-seq & 100\% & ${\sim}$65.55\%$^\dagger$ & --- & 92\%$^\dagger$ \\
+Full-seq & 100\% & 62.35\% \\
+\midrule
+\textit{Baseline} & --- & \textit{50.95\%} \\
 \bottomrule
-\multicolumn{5}{l}{\footnotesize $^\dagger$ First-boxed extraction; last-boxed degrades to 43.80\% by step 200.}
 \end{tabular}
 \end{table}
 
-The results reveal a robust sweet spot at $N = 50$--$200$, where performance saturates. Even $N{=}5$ (only 5 tokens of distillation signal) produces a meaningful improvement of +5.55pp over baseline. Beyond $N{=}50$, returns diminish rapidly. In the large-scale ($n{=}1$) setting, $N{=}50$, $N{=}100$, and $N{=}150$ all converge to $\sim$66.65\%, demonstrating robustness to the choice of $N$.
+The results reveal a robust sweet spot at $N = 50$--$200$, where performance saturates. All positional variants ($N{=}50$ through $N{=}200$) converge to $\sim$66\% avg@4, outperforming full-sequence distillation (62.35\%) by 3--4pp. The method is not sensitive to the exact choice of $N$ within this range.
 
 \paragraph{Value clipping is not a substitute for positional truncation.} An alternative to positional truncation is to clip per-token KL contributions to a maximum value, reducing the influence of extreme outliers at all positions. We test full-trajectory training with KL clipped to 2.0. This achieves only 48.80\% avg@4---below the undistilled baseline (50.95\%) and far below positional distillation (65.85\%). Clipping indiscriminately removes high-KL signal from early positions (strategy selection tokens with KL $\gg$ 2) along with late-position noise. Positional truncation is strictly more effective because it preserves all signal at early positions while removing all signal at late positions.
 
