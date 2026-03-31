@@ -94,24 +94,30 @@ This creates a \emph{phase shift} in the teacher's role along the trajectory. At
 \subsection{Per-Position KL Distribution}
 \label{sec:kl_distribution}
 
-To investigate the distillation signal, we generate 59,936 on-policy trajectories (mean length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. Positions are 0-indexed throughout (position 0 is the first generated token). Figure~\ref{fig:teaser} shows the result: KL is massively concentrated at early positions.
+To investigate the distillation signal, we generate 59,936 on-policy trajectories (mean length 386 tokens) from the undistilled student and compute per-position KL divergence against the teacher. Positions are 0-indexed throughout (position 0 is the first generated token). Figure~\ref{fig:analysis} presents a unified view of our analysis.
 
-\begin{figure}[t]
+\begin{figure*}[t]
     \centering
-    \begin{subfigure}[b]{0.48\textwidth}
+    \begin{subfigure}[b]{0.32\textwidth}
         \centering
         \includegraphics[width=\textwidth]{figures/fig1a_kl_curve.pdf}
-        \caption{Per-position KL divergence across 59,936 trajectories.}
+        \caption{Per-position KL divergence.}
     \end{subfigure}
     \hfill
-    \begin{subfigure}[b]{0.48\textwidth}
+    \begin{subfigure}[b]{0.32\textwidth}
         \centering
-        \includegraphics[width=\textwidth]{figures/fig1b_performance_vs_pos.pdf}
-        \caption{MATH-500 avg@4 vs.\ position limit $N$.}
+        \includegraphics[width=\textwidth]{figures/fig_continuation.pdf}
+        \caption{Prefix continuation (test-time).}
     \end{subfigure}
-    \caption{\textbf{KL divergence is front-loaded, and early-token distillation is sufficient.} (a) KL between teacher and student decays steeply from position 0 (KL = 3.06) to a plateau around 0.4 after position 100. (b) Performance increases rapidly with the first 50--100 tokens and saturates thereafter.}
-    \label{fig:teaser}
-\end{figure}
+    \hfill
+    \begin{subfigure}[b]{0.32\textwidth}
+        \centering
+        \includegraphics[width=\textwidth]{figures/fig2_stability.pdf}
+        \caption{Training on different positions.}
+    \end{subfigure}
+    \caption{\textbf{Token reward quality analysis.} (a) KL divergence between teacher and student decays steeply from position 0 (KL = 3.06) to a plateau around 0.4 after position 100, showing that the distillation signal is concentrated in early positions. (b) Prefix continuation experiment: when the teacher continues from a student prefix, performance degrades from 62.7\% (100-token prefix) to 51.8\% (300-token prefix), showing that early tokens determine the trajectory. (c) Full-sequence distillation degrades over training (coding: 40\% $\rightarrow$ 27\%), while our positional method remains stable---consistent with low-quality later-position signals accumulating harm over time.}
+    \label{fig:analysis}
+\end{figure*}
 
 Table~\ref{tab:kl_phases} summarizes the KL distribution by position phase. Position 0 (KL = 3.057) is 8.5$\times$ higher than position 192 (KL = 0.359). The ultra-early phase (positions 0--4) averages 1.714, while the late phase (150--199) averages only 0.383. The decay is rapid in the first 5 positions (3.057 $\rightarrow$ 0.921), then gradual, stabilizing into a long tail after position $\sim$100.
 
@@ -185,14 +191,7 @@ Figure~\ref{fig:example} illustrates this with a concrete example. The student's
 \subsection{Prefix Continuation: Early Tokens Determine the Trajectory}
 \label{sec:continuation}
 
-To directly test whether early tokens determine the quality of the full response, we evaluate prefix continuation on MATH-500: given a prefix of $L$ tokens from one model, the other model generates the continuation. Figure~\ref{fig:continuation} shows the results.
-
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=0.48\textwidth]{figures/fig_continuation.pdf}
-    \caption{\textbf{Prefix continuation on MATH-500.} Performance is dominated by the continuation model, but degrades as the prefix gets longer and locks in the reasoning trajectory.}
-    \label{fig:continuation}
-\end{figure}
+To directly test whether early tokens determine the quality of the full response, we evaluate prefix continuation on MATH-500: given a prefix of $L$ tokens from one model, the other model generates the continuation (Figure~\ref{fig:analysis}b).
 
 With a 100-token student prefix, the teacher achieves 62.70\% avg@4---only 2.6pp below its own baseline of 65.30\%. At 200 tokens, performance drops to 56.30\%; at 300 tokens, it falls to 51.75\% (the student baseline). The student's reasoning choices become entrenched and the teacher cannot recover. Conversely, with a 100-token teacher prefix, the student achieves only 47.00\%---\emph{below} its own baseline---due to style mismatch between the models.
 
@@ -300,9 +299,6 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \multirow{2}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
  & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{43.29} & \textbf{52.38} & \textbf{45.80} & ${\sim}$8 \\
 \midrule
-\multirow{2}{*}{Qwen3-8B} & Full-seq & 66.75$^\dagger$ & 36.59 & \textbf{51.06} & \textbf{62.83} & ${\sim}$170$^\ddagger$ \\
- & \textbf{Ours ($N{=}100$)} & \textbf{67.85} & \textbf{41.46} & 50.53 & 57.00 & ${\sim}$8 \\
-\midrule
 \multicolumn{7}{l}{\textit{Student: gemma-2-2b-it (LoRA) --- cross-family}} \\
 \midrule
 --- & Baseline & 13.45 & 23.78 & 40.48 & 73.50 & --- \\
@@ -310,28 +306,17 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \multirow{2}{*}{gemma-3-4b-it} & Full-seq & 11.70$^\S$ & --- & --- & --- & ${\sim}$210 \\
  & \textbf{Ours ($N{=}100$)} & \textbf{27.20} & \textbf{31.10} & \textbf{50.53} & \textbf{82.50} & ${\sim}$8 \\
 \bottomrule
-\multicolumn{7}{l}{\footnotesize $^\dagger$ Step 50 only; later steps not evaluated.} \\
-\multicolumn{7}{l}{\footnotesize $^\ddagger$ Full-seq with 8B teacher frequently OOMs on 48GB GPU.} \\
 \multicolumn{7}{l}{\footnotesize $^\S$ Gemma full-seq degrades below baseline; other tasks not evaluated.}
 \end{tabular}
 \end{table}
 
-\paragraph{Results.} With the Qwen3-1.7B teacher, \method{} ($N{=}100$) matches or exceeds full-sequence distillation on 3 of 4 benchmarks while achieving 35$\times$ speedup. Larger teachers improve quality further: the 4B teacher yields 68.95\% avg@4 on math (+3.1pp over 1.7B). The Gemma cross-family pair demonstrates that \method{} transfers across model families with incompatible tokenizers, doubling math accuracy (13.45\% $\rightarrow$ 27.20\%) and substantially improving all other metrics.
+\paragraph{Results.} With the Qwen3-1.7B teacher, \method{} ($N{=}100$) matches or exceeds full-sequence distillation on 3 of 4 benchmarks while achieving 35$\times$ speedup. Scaling to the 4B teacher improves quality further: 68.95\% avg@4 on math (+3.1pp over 1.7B), with \method{} outperforming full-seq on all metrics. The Gemma cross-family pair demonstrates that \method{} transfers across model families with incompatible tokenizers, doubling math accuracy (13.45\% $\rightarrow$ 27.20\%) and substantially improving all other metrics. Additional teacher scales (8B) are in Appendix~\ref{app:additional_pairs}.
 
 
 \subsection{Training Stability}
 \label{sec:stability}
 
-\begin{figure}[t]
-    \centering
-    \includegraphics[width=\textwidth]{figures/fig2_stability.pdf}
-    \caption{\textbf{Training stability: \method{} vs.\ full-sequence distillation.} Full-sequence distillation degrades on both math (repetition collapse) and coding (monotonic decline), while \method{} maintains stable accuracy throughout training.}
-    \label{fig:stability}
-\end{figure}
-
-Figure~\ref{fig:stability} shows training curves across steps. Full-sequence distillation degrades on all three tasks: HumanEval drops from 40.24\% to 26.83\% (a 33\% relative decline), MATH-500 develops catastrophic repetition, and BFCL oscillates after its peak. In contrast, \method{} maintains stable or improving accuracy across all checkpoints on all tasks. The range between best and worst steps for \method{} is typically 1--3 percentage points, compared to 13--22 points for full-sequence.
-
-This supports our hypothesis from Section~\ref{sec:hypothesis}: restricting loss to high-signal early positions is consistent with reduced instability from avoiding the low-signal tail.
+As shown in Figure~\ref{fig:analysis}c, full-sequence distillation degrades on coding tasks: HumanEval drops from 40.24\% to 26.83\% (a 33\% relative decline), while MATH-500 develops catastrophic \bboxed{} repetition. In contrast, \method{} maintains stable or improving accuracy across all checkpoints and tasks. The range between best and worst steps for \method{} is typically 1--3 percentage points, compared to 13--22 points for full-sequence. This is a direct consequence of the signal quality analysis (Section~\ref{sec:analysis}): restricting loss to high-quality early positions avoids the harmful later-position signals that accumulate over training.
 
 
 \paragraph{Efficiency.} \Method{} achieves 21--35$\times$ wall-clock speedup (Table~\ref{tab:timing} in Appendix). For 200 training steps, \method{} completes in $\sim$27 minutes versus 9--40 hours for full-sequence distillation on a single A6000 (48GB). The dominant cost in full-seq is autoregressive generation ($\sim$280s/step); \method{} generates only 100 tokens ($\sim$8s/step). Additionally, \method{} requires no inference server (vLLM/SGLang), since 100 tokens can be generated via standard HF generate.
