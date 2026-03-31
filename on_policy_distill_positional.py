@@ -1377,10 +1377,10 @@ def main():
                 n_selected = sel_mask.sum().item()
                 step_tokens += int(n_selected)
 
+                mb_loss = torch.tensor(0.0, device=student_device)
                 if vocab_mapping is not None:
                     # Cross-tokenizer: reverse KL over shared vocabulary
                     # Process per-trajectory since remap_teacher_logprobs works per-trajectory
-                    mb_loss = torch.tensor(0.0, device=student_device)
                     for i in range(mb_size):
                         sel_idx_i = sel_mask[i].nonzero(as_tuple=True)[0]
                         if len(sel_idx_i) == 0:
@@ -1431,48 +1431,41 @@ def main():
                             t_lps = t_log_probs_shared.to(student_device).gather(-1, _lm.unsqueeze(-1)).squeeze(-1)
                             step_kl += (s_lps - t_lps).mean().item()
                             step_ce += (-s_lps).mean().item()
+                else:
+                    # Same-tokenizer: batch KL over selected positions
+                    # Align vocab sizes if needed
+                    min_vocab = min(t_log_probs_padded.shape[-1], s_log_probs_resp.shape[-1])
+                    t_lp = t_log_probs_padded[..., :min_vocab]
+                    s_lp = s_log_probs_resp[..., :min_vocab]
+
+                    # Compute per-position KL: [mb_size, max_resp_len]
+                    if args.loss_type == "reverse_kl":
+                        per_pos_kl = (torch.exp(t_lp) * (t_lp - s_lp)).sum(dim=-1)
+                    elif args.loss_type in ("dft_distill", "dft_distill_deadzone"):
+                        per_pos_kl_raw = (torch.exp(t_lp) * (t_lp - s_lp)).sum(dim=-1)
+                        s_prob_sampled = s_lp.gather(-1, labels_resp.unsqueeze(-1)).squeeze(-1).exp().detach()
+                        if args.loss_type == "dft_distill_deadzone":
+                            with torch.no_grad():
+                                dz_mask = (per_pos_kl_raw.detach() > 0.1).float()
+                            s_prob_sampled = s_prob_sampled * dz_mask
+                        per_pos_kl = per_pos_kl_raw * s_prob_sampled
                     else:
-                        # Same-tokenizer path
-                        # Align vocab sizes if needed (e.g. padding differences)
-                        if t_log_probs.shape[-1] != s_log_probs_resp.shape[-1]:
-                            min_vocab = min(t_log_probs.shape[-1], s_log_probs_resp.shape[-1])
-                            t_log_probs = t_log_probs[..., :min_vocab]
-                            s_log_probs_resp = s_log_probs_resp[..., :min_vocab]
+                        raise ValueError(f"Unknown loss_type: {args.loss_type}")
 
-                        if args.loss_type == "reverse_kl":
-                            # Standard full-distribution reverse KL
-                            loss_traj = kl_div(
-                                t_log_probs.to(student_device),
-                                s_log_probs_resp,
-                                log_target=True,
-                                reduction="batchmean",
-                            )
-                        elif args.loss_type in ("dft_distill", "dft_distill_deadzone"):
-                            # DFT-style distillation: per-position KL weighted by
-                            # student probability of sampled token (normalizes gradient magnitude).
-                            # Inspired by DFT (Wu et al., ICLR 2026): loss *= p_student(y_t).detach()
-                            t_lp = t_log_probs.to(student_device)
-                            # Per-position KL: sum over vocab
-                            per_pos_kl = (torch.exp(t_lp) * (t_lp - s_log_probs_resp)).sum(dim=-1)  # [k]
-                            # Student probability of the sampled token at each position
-                            s_prob_sampled = s_log_probs_resp.gather(
-                                -1, limited_labels.unsqueeze(-1)).squeeze(-1).exp().detach()  # [k]
-                            if args.loss_type == "dft_distill_deadzone":
-                                # Deadzone: zero out gradient where teacher and student agree closely
-                                with torch.no_grad():
-                                    mask = (per_pos_kl.detach() > 0.1).float()
-                                s_prob_sampled = s_prob_sampled * mask
-                            # Weighted KL: high-prob tokens keep normal gradient, low-prob tokens dampened
-                            loss_traj = (per_pos_kl * s_prob_sampled).mean()
-                        else:
-                            raise ValueError(f"Unknown loss_type: {args.loss_type}")
-                        mb_loss = mb_loss + loss_traj / n_trajs
+                    # Mask: only selected positions contribute
+                    per_pos_kl = per_pos_kl * sel_mask.float()
+                    # Average over selected positions, then over batch
+                    n_sel_per_traj = sel_mask.float().sum(dim=-1).clamp(min=1)
+                    loss_per_traj = per_pos_kl.sum(dim=-1) / n_sel_per_traj
+                    mb_loss = loss_per_traj.sum() / n_trajs
 
-                        with torch.no_grad():
-                            s_lps = s_log_probs_resp.gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                            t_lps_sampled = t_log_probs.to(student_device).gather(-1, limited_labels.unsqueeze(-1)).squeeze(-1)
-                            step_kl += (s_lps - t_lps_sampled).mean().item()
-                            step_ce += (-s_lps).mean().item()
+                    with torch.no_grad():
+                        s_lps = s_lp.gather(-1, labels_resp.unsqueeze(-1)).squeeze(-1)
+                        t_lps = t_lp.gather(-1, labels_resp.unsqueeze(-1)).squeeze(-1)
+                        sel_s = (s_lps * sel_mask.float()).sum() / n_selected if n_selected > 0 else 0
+                        sel_t = (t_lps * sel_mask.float()).sum() / n_selected if n_selected > 0 else 0
+                        step_kl += (sel_s - sel_t).item() if isinstance(sel_s, torch.Tensor) else (sel_s - sel_t)
+                        step_ce += (-sel_s).item() if isinstance(sel_s, torch.Tensor) else (-sel_s)
 
                 mb_loss.backward()
                 step_loss_val += mb_loss.item()
