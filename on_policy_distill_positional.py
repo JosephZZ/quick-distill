@@ -1440,7 +1440,7 @@ def main():
 
                     # Compute per-position KL: [mb_size, max_resp_len]
                     if args.loss_type == "reverse_kl":
-                        per_pos_kl = (torch.exp(t_lp) * (t_lp - s_lp)).sum(dim=-1)
+                        per_pos_kl = (torch.exp(s_lp) * (s_lp - t_lp)).sum(dim=-1)
                     elif args.loss_type in ("dft_distill", "dft_distill_deadzone"):
                         per_pos_kl_raw = (torch.exp(t_lp) * (t_lp - s_lp)).sum(dim=-1)
                         s_prob_sampled = s_lp.gather(-1, labels_resp.unsqueeze(-1)).squeeze(-1).exp().detach()
