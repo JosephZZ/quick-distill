@@ -323,30 +323,30 @@ A natural alternative to positional selection is \emph{information-theoretic} se
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Token selection strategies} ($k{=}100$). All use full-length generation (max 2048 tokens) then select 100 tokens for loss. Baseline: 50.95\%.}
+\caption{\textbf{Token selection strategies} ($k{=}100$). All use full-length generation then select 100 tokens for loss. Signal coverage: fraction of the total signal (KL or entropy) captured by the selected tokens. Baseline: 50.95\%.}
 \label{tab:token_select}
 \small
-\begin{tabular}{lccc}
+\begin{tabular}{lcccc}
 \toprule
-\textbf{Selection strategy} & \textbf{KL coverage} & \textbf{Best avg@4} & \textbf{Mean position} \\
+\textbf{Selection strategy} & \textbf{Signal type} & \textbf{Coverage} & \textbf{Best avg@4} & \textbf{Mean pos.} \\
 \midrule
-\textbf{Prefix (first 100)} & 43.9\% & \textbf{65.85\%} & 50 \\
-Random 100 & $\sim$13\% & 63.05\% & $\sim$375 \\
-Top-Entropy-Teacher & $\sim$96\% & 62.20\% & $\sim$280 \\
-Top-Entropy-Student & $\sim$93\% & 61.35\% & $\sim$240 \\
-Full-seq (all tokens) & 100\% & 62.35\% & --- \\
-Top-KL 100 & 96\% & 58.60\% & $\sim$313 \\
+\textbf{Prefix (first 100)} & KL & 48.8\% & \textbf{65.85\%} & 50 \\
+Random 100 & --- & $\sim$13\% & 63.05\% & $\sim$375 \\
+Top-Ent.-Teacher 100 & Teacher ent. & 96.0\% & 62.20\% & $\sim$280 \\
+Top-Ent.-Student 100 & Student ent. & 93.5\% & 61.35\% & $\sim$240 \\
+Full-seq (all tokens) & all & 100\% & 62.35\% & --- \\
+Top-KL 100 & KL & 95.6\% & 58.60\% & $\sim$313 \\
 \midrule
-\textit{Baseline (no distill)} & --- & \textit{50.95\%} & --- \\
+\textit{Baseline (no distill)} & --- & --- & \textit{50.95\%} & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:token_select} reveals a striking pattern: \textbf{the strategies that capture the most KL signal perform worst.} Top-KL-100 captures 96\% of total KL yet achieves only 58.60\%---the worst of all methods. Top-entropy strategies (selecting where teacher or student is most uncertain) also underperform prefix and random selection. Moreover, top-KL degrades sharply from 58.60\% (step 50) to 45.70\% (step 100), the most extreme degradation in any configuration.
+Table~\ref{tab:token_select} reveals a striking pattern: \textbf{the strategies that capture the most signal perform worst.} Top-KL-100 captures 95.6\% of total KL divergence yet achieves only 58.60\%---the worst of all methods. Top-entropy strategies, which capture 93--96\% of their respective entropy signals, also underperform prefix and random selection. Moreover, top-KL degrades sharply from 58.60\% (step 50) to 45.70\% (step 100), dropping below the undistilled baseline.
 
-The key difference is \emph{position}: high-KL and high-entropy tokens are concentrated at later positions (mean position 240--313), while prefix tokens are at positions 0--99. Our signal quality analysis explains why: later-position tokens have lower teacher reliability (the teacher is conditioned on the student's prefix) and lower student leverage (changes don't cascade forward). Random-100, despite no signal-based selection, outperforms all ``smart'' strategies except prefix---simply because it statistically avoids the harmful later-position concentration.
+The key difference is \emph{position}: high-KL and high-entropy tokens are concentrated at later positions (mean position 240--313), while prefix tokens span positions 0--99. Random-100, despite capturing only $\sim$13\% of any signal, outperforms all ``smart'' strategies except prefix---because it statistically avoids concentrating on harmful later positions.
 
-This confirms that \textbf{position is the most important criterion for token selection in on-policy distillation}---more important than KL magnitude, teacher entropy, or student entropy.
+This confirms that \textbf{position is the most important criterion for token selection in on-policy distillation}. Capturing more of the raw KL or entropy signal is counterproductive when that signal comes from positions where the teacher is conditioned on the student's prefix and can no longer provide independent guidance.
 
 \subsection{Cascade Effect}
 \label{sec:cascade}
