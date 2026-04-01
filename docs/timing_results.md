@@ -1,41 +1,50 @@
-# Timing and Efficiency Results
+# Timing and Memory Results (V1 Original Code, Verified)
 
-Hardware: NVIDIA RTX A6000 (48GB), single GPU for both student and teacher.
-Student: Qwen2.5-Math-1.5B, LoRA r=32. Batch size 16, n_samples=1, 3200 math problems.
-Pos-100 uses HF generate (100 tokens), full-seq uses vLLM (max 3584 tokens).
+## Hardware Tested
+- **A100-SXM4-40GB** (scai3): All training experiments
+- **A6000 48GB** (UCLACG, scai4): Gemma + 4B teacher experiments
+- **V100-SXM2-16GB** (scai1): Only math pos experiments (coding/funcall OOM)
 
-## Per-Step Timing (averaged over 10 steps)
+## Per-Step Timing (A100 40GB, 2-GPU setup, bs=16)
+
+| Config | Gen (s) | Score (s) | Train (s) | **Total (s/step)** | Tokens/step |
+|--------|---------|-----------|-----------|-------------------|-------------|
+| pos-5 math | 0 | 1 | 3.5 | **~5** | 80 |
+| pos-50 math | 3 | 1 | 3.7 | **~8** | 800 |
+| **pos-100 math** | **6** | **1** | **3.7** | **~11** | 1600 |
+| pos-200 math | 12 | 1 | 4.0 | **~17** | (variable) |
+| **fullseq math** | **122** | **5** | **6.1** | **~133** | 11700 |
+
+**Speedup: pos-100 is 12x faster than fullseq per step on A100.**
+
+## Per-Step Timing (A100 40GB, 1-GPU single_gpu mode, bs=16)
 
 | Config | Gen (s) | Score (s) | Train (s) | **Total (s/step)** |
 |--------|---------|-----------|-----------|-------------------|
-| **Pos-100, Q3-1.7B teacher** | **5** | **1** | **2** | **~8** |
-| Full-seq, Q3-1.7B teacher | 100-731 | 3-10 | 5-12 | **~120-740** |
-| **Pos-100, Q3-4B teacher** | **5** | **1** | **2** | **~8** |
-| Full-seq, Q3-4B teacher | 97-733 | 3-9 | 6-10 | **~110-750** |
-| **Pos-100, Q3-8B teacher** | **5** | **1** | **2** | **~8** |
-| Full-seq, Q3-8B teacher | 96-230 | 7-11 | 1-6 | **~110-250** (OOM issues) |
+| pos-100 coding | 6 | 1 | 4.0 | **~11** |
+| fullseq coding | (running, ~100-130s gen expected) | | | **~140** |
 
-## Speedup Summary
+## GPU Memory Usage (Peak, A100 40GB)
 
-| Teacher | Pos-100 avg | Full-seq avg | **Speedup** |
-|---------|------------|-------------|------------|
-| Q3-1.7B | ~8s | ~280s | **~35x** |
-| Q3-4B | ~8s | ~210s | **~26x** |
-| Q3-8B | ~8s | ~170s | **~21x** |
+| Config | GPU Mode | Student GPU | Teacher GPU | Peak Total |
+|--------|----------|-------------|-------------|------------|
+| pos-100 math | 2-GPU | ~5 GB | ~4 GB | **~9 GB** |
+| fullseq math | 2-GPU | ~13 GB | ~4 GB | **~17 GB** |
+| fullseq coding | 1-GPU | **~34 GB** (student+teacher+gen) | same | **~34 GB** |
+| pos-100 coding | 1-GPU | ~8 GB | same | **~8 GB** |
 
-**Key finding**: Pos-100 is 21-35x faster per step than full-seq distillation. The dominant cost in full-seq is generation (100-730s vs 5s), since autoregressive generation of full sequences (avg ~1000 tokens) is extremely expensive. Teacher scoring and training time are similar between methods.
+## OOM Observations
 
-## Notes
+- **V100 16GB**: OOM on coding experiments (needs 7.47 GB allocation with 1.69 GB free). Math pos experiments work fine (~5 GB per GPU).
+- **A100 40GB**: No OOM on any configuration. Fullseq coding uses ~34 GB on single GPU.
+- **Fullseq math** on A100 2-GPU: ~13 GB student side, fits comfortably.
 
-- Full-seq generation time is highly variable (100-730s) due to variable sequence lengths and vLLM batching behavior.
-- Pos-100 generation time is constant (~5s) since only 100 tokens are generated via HF generate.
-- Full-seq with Q3-8B teacher OOMed on some steps (47GB GPU insufficient for 8B teacher + 1.5B student + vLLM), making it impractical on a single A6000.
-- Pos-100 with Q3-8B teacher runs fine (~8s/step) since only short sequences need to be processed.
-- Total training time for 200 steps: Pos-100 ≈ 27 minutes vs Full-seq ≈ 9-40 hours.
+## Total Training Time Estimate (200 steps)
 
-## GPU Memory
+| Config | Per-step | **200 steps** |
+|--------|----------|--------------|
+| pos-100 | ~11s | **~37 min** |
+| fullseq math | ~133s | **~7.4 hours** |
+| fullseq coding | ~140s (est) | **~7.8 hours** |
 
-- Pos-100: Student (1.5B) + Teacher (1.7B/4B) fit comfortably on single 48GB GPU with room for training.
-- Full-seq: Requires vLLM with gpu_memory_utilization=0.7-0.9, leaving limited memory for training.
-- Full-seq + Q3-8B: **OOMs on 48GB GPU** — cannot fit 8B teacher + vLLM + student training on single GPU.
-- Pos-100 + Q3-8B: Works fine on single 48GB GPU since no vLLM overhead and short sequences.
+**Speedup: pos-100 completes in 37 minutes vs fullseq in 7+ hours = 12x faster.**
