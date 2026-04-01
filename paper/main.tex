@@ -212,13 +212,13 @@ Table~\ref{tab:main_results} presents the unified main results across tasks, tea
 \midrule
 --- & Baseline & 50.95 & 32.93 & 52.12 & 2.70 & --- \\
 \midrule
-\multirow{3}{*}{Qwen3-1.7B} & Full-seq & 62.35 & 40.24 & 52.65 & --- & ${\sim}$280 \\
- & \textbf{Ours ($N{=}50$)} & \textbf{66.65} & \textbf{42.07} & 52.12 & 57.20 & ${\sim}$4 \\
- & \textbf{Ours ($N{=}100$)} & 65.85 & \textbf{42.07} & 49.21 & \textbf{61.30} & ${\sim}$8 \\
+\multirow{3}{*}{Qwen3-1.7B} & Full-seq & --- & 40.24 & 52.65 & --- & ${\sim}$280 \\
+ & \textbf{Ours ($N{=}50$)} & 61.70 & --- & --- & --- & ${\sim}$4 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{63.15} & --- & --- & --- & ${\sim}$8 \\
 \midrule
-\multirow{3}{*}{Qwen3-4B} & Full-seq & 67.45 & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
- & \textbf{Ours ($N{=}50$)} & --- & --- & --- & \textbf{50.17} & ${\sim}$4 \\
- & \textbf{Ours ($N{=}100$)} & \textbf{68.95} & \textbf{43.29} & \textbf{52.38} & 45.80 & ${\sim}$8 \\
+\multirow{3}{*}{Qwen3-4B} & Full-seq & --- & 39.63 & 50.79 & 34.83 & ${\sim}$210 \\
+ & \textbf{Ours ($N{=}50$)} & 61.70 & --- & --- & --- & ${\sim}$4 \\
+ & \textbf{Ours ($N{=}100$)} & \textbf{64.20} & --- & --- & --- & ${\sim}$8 \\
 \midrule
 \multicolumn{7}{l}{\textit{Student: gemma-2-2b-it (LoRA) --- cross-family}} \\
 \midrule
@@ -255,18 +255,21 @@ As shown in Figure~\ref{fig:degradation} and discussed in Section~\ref{sec:degra
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Training resource usage for \method{} ($N{=}100$).} Peak GPU memory (measured via \texttt{nvidia-smi}) and per-step time breakdown. Student: Qwen2.5-Math-1.5B (LoRA), Teacher: Qwen3-1.7B. Each model on a separate GPU.}
+\caption{\textbf{Training resource usage.} Peak GPU memory (via \texttt{nvidia-smi}, \texttt{max\_new\_tokens}$=$3584) and per-step time. Student: Qwen2.5-Math-1.5B (LoRA), Teacher: Qwen3-1.7B, each on a separate GPU.}
 \label{tab:timing}
 \small
-\begin{tabular}{l cc l}
+\setlength{\tabcolsep}{4pt}
+\begin{tabular}{l cc cc cc c}
 \toprule
-\textbf{Model} & \multicolumn{2}{c}{\textbf{Peak GPU Memory}} & \textbf{Time / step} \\
-\cmidrule(lr){2-3}
- & bs$=$1 & bs$=$8 & \\
+& \multicolumn{2}{c}{\textbf{Student Mem (GB)}} & \multicolumn{2}{c}{\textbf{Teacher Mem (GB)}} & \multicolumn{2}{c}{\textbf{Student Time (s)}} & \textbf{Teacher} \\
+\cmidrule(lr){2-3} \cmidrule(lr){4-5} \cmidrule(lr){6-7} \cmidrule(lr){8-8}
+\textbf{Method} & bs$=$1 & bs$=$8 & bs$=$1 & bs$=$8 & Gen & Train & Score (s) \\
 \midrule
-Student (1.5B) & 4.9\,GB & 13.4\,GB & Gen:\;${\sim}$5\,s \quad Train:\;${\sim}$2\,s \\
-Teacher (1.7B) & 4.6\,GB & 4.9\,GB & Scoring:\;${\sim}$1\,s \\
+Pos-50  & 4.8 & 11.3 & 4.6 & 4.7 & ${\sim}$5 & ${\sim}$2 & ${\sim}$1 \\
+Pos-100 & 4.9 & 13.4 & 4.6 & 4.9 & ${\sim}$5 & ${\sim}$2 & ${\sim}$1 \\
+Full-seq & 22.2 & 73.3$^\dagger$ & 6.8 & 9.1 & 100--731 & 5--12 & 3--10 \\
 \bottomrule
+\multicolumn{8}{l}{\footnotesize $^\dagger$ OOM during training; mini-batch skipped.}
 \end{tabular}
 \end{table}
 
@@ -277,7 +280,7 @@ Teacher (1.7B) & 4.6\,GB & 4.9\,GB & Scoring:\;${\sim}$1\,s \\
     \label{fig:degradation}
 \end{figure}
 
-Table~\ref{tab:timing} shows the resource footprint of \method{}. The total per-step time is ${\sim}$8\,s (5\,s generation + 2\,s training + 1\,s teacher scoring), compared to ${\sim}$280\,s for full-seq distillation---a 35$\times$ speedup. Peak GPU memory with bs$=$8 is 13.4\,GB for the student and 4.9\,GB for the teacher, well within a single consumer GPU. \Method{} does not require a vLLM/SGLang inference server since 100 tokens can be generated via standard HF \texttt{generate}.
+Table~\ref{tab:timing} compares resource usage across the three settings. Positional methods (pos-50, pos-100) require ${\sim}$7\,s per step and under 14\,GB student memory even at bs$=$8, while full-seq requires 100--731\,s per step and OOMs at bs$=$8 (73\,GB). This yields a 35$\times$ wall-clock speedup for \method{}. Positional distillation also avoids the need for a vLLM/SGLang inference server, since 50--100 tokens can be generated via standard HF \texttt{generate}.
 
 % ============================================================================
 % 5. ABLATION EXPERIMENTS
