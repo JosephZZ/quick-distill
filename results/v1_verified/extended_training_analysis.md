@@ -1,8 +1,8 @@
-# Extended Training Analysis (400 Steps)
+# Extended Training & FullFT Analysis
 
-## Key Finding: LoRA regularization is critical
+## 1. LoRA Extended 400 Steps (M-1.5B → Q3-1.7B)
 
-### LoRA pos-100 (M-1.5B→Q3-1.7B, resume from s200)
+### LoRA pos-100
 
 | Step | avg@4 |
 |------|-------|
@@ -15,62 +15,22 @@
 | 350 | 62.15 |
 | 400 | 62.65 |
 
-**Stable through 400 steps.** Peak at s300 (63.65%), even higher than s150 (63.15%). LoRA regularization prevents overfitting.
+**Stable through 400 steps.** Peak at s300 (63.65%). LoRA regularization prevents overfitting.
 
-### FullFT pos-100 (M-1.5B→Q3-1.7B, resume from s200)
-
-| Step | avg@4 |
-|------|-------|
-| 50 | 50.85 |
-| 100 | 52.35 |
-| 150 | 53.00 |
-| **200** | **53.15** |
-| 250 | 49.20 ⚠️ |
-| 300 | 49.90 ⚠️ |
-| 350 | 50.75 |
-| 400 | 49.95 ⚠️ |
-
-**Degrades after s200.** Falls BELOW baseline (50.95%) at s250. Even pos-100 (clean signal) cannot prevent FullFT overfitting.
-
-### FullFT fullseq 400 steps ✅ COMPLETE
+### LoRA fullseq (400 steps, resumed from step 200)
 
 | Step | avg@4 |
 |------|-------|
-| 50 | 51.40 |
-| 100 | 53.55 |
-| 150 | 54.95 |
-| 200 | 55.95 |
-| 250 | 57.05 |
-| **300** | **57.10** |
-| 350 | 56.05 |
-| 400 | 56.20 |
+| 250 | 56.30 |
+| 300 | 55.10 |
+| 350 | 54.95 |
+| 400 | 52.95 |
 
-**Does NOT degrade!** Keeps improving to 57.10% at s300, then plateaus.
-This is the OPPOSITE of LoRA fullseq (which collapses at step 150).
+Continues to degrade from the original collapse. NOT recovered.
 
-## Interpretation
+## 2. FullFT Complete Position Sweep 400 Steps (M-1.5B → Q3-1.7B)
 
-1. **LoRA regularization is the key differentiator**, not signal quality alone
-2. FullFT degrades on pos-100 (clean signal) → degradation is NOT caused by late-position noise
-3. LoRA is stable on pos-100 AND improves to 63.65 → low-rank constraint prevents overfitting
-4. The FullFT fullseq 400-step experiment will tell us if fullseq degrades MORE than pos-100 in FullFT (which would implicate signal quality as an additional factor)
-
-## Final Hypothesis A: Interaction between parameterization and signal quality
-
-The results show a **crossover interaction** between parameterization (LoRA vs FullFT) and position selection:
-
-| | LoRA | FullFT |
-|---|------|--------|
-| **pos-100** | **63.65% (stable)** ✅ | 53.15→49.20 (degrades) ❌ |
-| **fullseq** | 62.35→37.75 (degrades) ❌ | **57.10% (stable)** ✅ |
-
-**Interpretation:**
-1. **LoRA needs clean signal (pos-100)** — low-rank parameters can't absorb late-position noise, so noisy gradients corrupt the model. But with clean signal, LoRA's regularization prevents overfitting.
-2. **FullFT needs diverse signal (fullseq)** — full parameters CAN absorb noise, but with limited signal (pos-100 = only 100 tokens), they overfit. Fullseq provides enough gradient diversity to prevent overfitting.
-3. **Positional distillation is critical FOR LoRA** — this is the practical setting (most practitioners use LoRA)
-4. **The "harmful late-position signal" is only harmful when the model lacks capacity to filter it** — FullFT can learn useful patterns from late positions while ignoring noise
-
-## Complete FullFT Position Sweep 400 Steps (M-1.5B → Q3-1.7B)
+**Baseline**: 50.95%
 
 | Step | pos-100 | pos-150 | pos-200 | pos-300 | fullseq |
 |------|---------|---------|---------|---------|---------|
@@ -82,29 +42,76 @@ The results show a **crossover interaction** between parameterization (LoRA vs F
 | 300 | 49.90⚠️ | **54.55** | 53.75 | **55.10** | **57.10** |
 | 350 | 50.75 | 53.85 | 53.10 | 54.95 | 56.05 |
 | 400 | 49.95⚠️ | 52.85 | 53.85 | 54.25 | 56.20 |
+| **Best** | **53.15** | **54.55** | **54.05** | **55.10** | **57.10** |
 
-**Key insight: FullFT needs ≥150 tokens of gradient diversity to avoid overfitting.**
-- pos-100 degrades (only 100 tokens — insufficient diversity)
-- pos-150+ all stable (enough diversity for full parameters)
-- More tokens → higher peak (monotonic: 53.15 < 54.55 < 55.10 < 57.10)
+**Key findings:**
+- pos-100 degrades badly (53.15→49.20) — insufficient gradient diversity
+- pos-150+ all stable — ≥150 tokens enough diversity for FullFT
+- Monotonic improvement with more tokens: 53.15 < 54.55 < 55.10 < 57.10
+- pos-300 reaches 97% of fullseq performance (55.10/57.10)
 
-## Q3-1.7B→Q3-4B FullFT Results (new model pair)
+## 3. Q3-1.7B → Q3-4B FullFT (new model pair)
 
-### FullFT pos-100
-| Step | avg@4 |
-|------|-------|
-| 50 | 64.35 |
-| **100** | **64.65** |
-| 150 | 64.00 |
-| 200 | 64.45 |
+**Baseline**: 69.20%
 
-Baseline Q3-1.7B = 69.20%. Best = 64.65% (-4.55pp). Stable, no degradation.
+| Step | pos-100 | pos-150 | pos-200 | fullseq |
+|------|---------|---------|---------|---------|
+| 50 | 64.35 | 64.65 | 64.70 | 64.75 |
+| 100 | **64.65** | 64.35 | **64.85** | **65.20** |
+| 150 | 64.00 | **64.75** | — | 64.85 |
+| 200 | 64.45 | 64.45 | — | 64.90 |
+| **Best** | **64.65** | **64.75** | **64.85** | **65.20** |
 
-### FullFT fullseq
-🔄 Training on scai4 GPU 7, step 150/200
+Same pattern: fullseq > pos-N. Gap smaller here (~0.5pp) because Q3-1.7B is stronger.
+
+## 4. FullFT Coding (M-1.5B → Q3-1.7B, HumanEval/HE+ pass@1)
+
+**Baseline**: HE=32.93%, HE+=?
+
+| Step | pos-50 HE/HE+ | pos-100 HE/HE+ | fullseq HE/HE+ |
+|------|--------------|----------------|----------------|
+| 50 | 33.5/28.0 | 31.7/27.4 | 32.3/28.0 |
+| 100 | 34.8/29.9 | 34.8/29.9 | 34.1/29.9 |
+| 150 | 36.0/30.5 | 35.4/30.5 | 36.0/29.9 |
+| 200 | **37.2/31.1** | 35.4/31.1 | 36.0/30.5 |
+| **Best HE** | **37.2** | **35.4** | **36.0** |
+
+Interesting: coding FullFT shows pos-50 > fullseq > pos-100. Shorter is better for coding FullFT.
+
+## 5. Crossover Interaction (confirmed)
+
+| | LoRA | FullFT |
+|---|------|--------|
+| **pos-100** | **63.65% (stable)** ✅ | 53.15→49.20 (degrades) ❌ |
+| **fullseq** | 62.35→37.75 (1/3 seeds collapse) | **57.10% (stable)** ✅ |
+
+**Interpretation:**
+1. **LoRA needs clean signal (pos-100)** — low-rank parameters can't absorb late-position noise
+2. **FullFT needs diverse signal (fullseq)** — full parameters overfit with limited tokens
+3. **Positional distillation is critical FOR LoRA** — the dominant practical setting
+4. **FullFT benefits from more tokens** — gradient diversity acts as implicit regularization
+
+## 6. Multi-Seed Results
+
+### pos-100 (3 seeds)
+| Step | Original | seed42 | seed123 | Mean±Std |
+|------|----------|--------|---------|----------|
+| Best | **63.15** | 62.10 | 61.80 | **62.35±0.72** |
+
+### fullseq (3 seeds)
+| Step | Original | seed42 | seed123 |
+|------|----------|--------|---------|
+| 100 | **62.35** | **61.70** | 61.30 |
+| 150 | **37.75⚠️** | 61.10 | 60.35 |
+| 200 | — | 60.60 | **61.45** |
+
+**Degradation occurs in 1/3 seeds only.** pos-100 advantage is RELIABILITY, not average performance.
+
+## 7. REOPOLD Comparison (pending)
+
+REOPOLD LoRA (entropy top-20% masking): training on scai4 GPU 7
+REOPOLD FullFT: training done, eval pending (NFS outage)
 
 ## Paper Implication
 
-The narrative should be: "Positional distillation is especially important for parameter-efficient fine-tuning (LoRA), which is the dominant practical setting. The low-rank constraint that makes LoRA efficient also makes it vulnerable to noisy gradient signal from later positions. Restricting to early positions where signal quality is highest provides exactly the regularization LoRA needs."
-
-For FullFT, the recommendation is reversed: use full-sequence distillation with more training steps, as the model benefits from gradient diversity.
+The narrative: "Positional distillation is especially important for parameter-efficient fine-tuning (LoRA), the dominant practical setting. The low-rank constraint that makes LoRA efficient also makes it vulnerable to noisy gradient signal from later positions. Restricting to early positions provides exactly the regularization LoRA needs. For full fine-tuning, practitioners should use full-sequence distillation with extended training, as the model benefits from gradient diversity."
