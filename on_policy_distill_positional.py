@@ -840,9 +840,15 @@ def main():
         "--token_select_mode",
         type=str,
         default="prefix",
-        choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random"],
-        help="Which response tokens to distill: prefix (first N), top_kl, top_entropy_student, top_entropy_teacher",
+        choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random",
+                 "middle", "last", "reopold"],
+        help="Which response tokens to distill: prefix (first N), top_kl, top_entropy_student, "
+             "top_entropy_teacher, random, middle, last, reopold (entropy-guided masking à la REOPOLD)",
     )
+    parser.add_argument("--reopold_beta", type=float, default=0.2,
+                       help="REOPOLD: fraction of highest-entropy tokens to keep (default 0.2 = top 20%%)")
+    parser.add_argument("--reward_clip", type=float, default=0.0,
+                       help="Clip per-token KL from above at this value (0=disabled). REOPOLD uses ~5.0")
     parser.add_argument("--progressive_position", action="store_true",
                        help="Linearly increase position_limit from 1 to num_problems over training")
     parser.add_argument("--resume_from", type=str, default=None,
@@ -875,8 +881,10 @@ def main():
     single_gpu = args.single_gpu or (args.student_gpu == args.teacher_gpu == args.vllm_gpu)
     if single_gpu:
         print("Single-GPU mode: models will take turns on the GPU")
-    if args.token_select_mode != "prefix" and args.position_limit <= 0:
+    if args.token_select_mode not in ("prefix", "reopold") and args.position_limit <= 0:
         raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
+    if args.token_select_mode == "reopold" and args.position_limit <= 0:
+        args.position_limit = 0  # reopold uses dynamic percentage, not fixed K
 
     # Compute n_problems per step from bs and n_samples
     if args.bs % args.n_samples != 0:
@@ -919,9 +927,14 @@ def main():
     teacher_tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, trust_remote_code=True)
     # Qwen3/Gemma3 thinking models need nothink prefix; others get empty list
     _nothink_str = "<think>\n\n</think>\n\n"
-    _test_ids = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
-    # If the tokenizer doesn't know <think> token, it will split into subwords (many ids)
-    nothink_ids = _test_ids if len(_test_ids) <= 6 else []
+    # nothink_ids for teacher scoring (teacher tokenizer)
+    _test_ids_teacher = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
+    nothink_ids_teacher = _test_ids_teacher if len(_test_ids_teacher) <= 6 else []
+    # nothink_ids for student input (student tokenizer) — may differ in cross-tokenizer setups
+    _test_ids_student = tokenizer.encode(_nothink_str, add_special_tokens=False)
+    nothink_ids = _test_ids_student if len(_test_ids_student) <= 6 else []
+    if nothink_ids != nothink_ids_teacher:
+        print(f"  Cross-tokenizer nothink: student={nothink_ids}, teacher={nothink_ids_teacher}")
 
     # Build cross-tokenizer vocab mapping if student and teacher use different tokenizers
     vocab_mapping = None
@@ -1212,12 +1225,12 @@ def main():
                 # Cross-tokenizer: re-tokenize text for teacher scoring
                 teacher_lps = query_teacher_cross_tokenizer(
                     teacher_model, trajs, tokenizer, teacher_tokenizer,
-                    nothink_ids, current_pos_limit, device=teacher_device,
+                    nothink_ids_teacher, current_pos_limit, device=teacher_device,
                 )
             else:
                 query_pos_limit = current_pos_limit if args.token_select_mode == "prefix" else 0
                 teacher_lps = query_teacher_hf_logits_batch(
-                    teacher_model, trajs, nothink_ids, query_pos_limit, device=teacher_device,
+                    teacher_model, trajs, nothink_ids_teacher, query_pos_limit, device=teacher_device,
                     micro_bs=args.teacher_micro_bs,
                 )
             all_chunk_trajs.extend(trajs)
@@ -1257,6 +1270,10 @@ def main():
                 # Legacy positional distillation: only keep prefix tokens.
                 distill_len = min(resp_len, current_pos_limit) if current_pos_limit > 0 else resp_len
                 full_ids = prompt_ids + nothink_ids + response_ids[:distill_len]
+            elif args.token_select_mode == "reopold":
+                # REOPOLD: keep full response, select by entropy percentage later
+                distill_len = resp_len
+                full_ids = prompt_ids + nothink_ids + response_ids
             else:
                 # Full trajectory rollout, select top-K positions later.
                 distill_len = min(resp_len, current_pos_limit)
@@ -1370,6 +1387,37 @@ def main():
                         rlen = mb_resp_lens[i]
                         perm = torch.randperm(rlen, device=student_device)[:k]
                         sel_mask[i].scatter_(0, perm, True)
+                elif args.token_select_mode == "middle":
+                    for i in range(mb_size):
+                        k = mb_distill_counts[i]
+                        rlen = mb_resp_lens[i]
+                        if rlen <= k:
+                            sel_mask[i, :rlen] = True
+                        else:
+                            mid = rlen // 2
+                            start = max(0, mid - k // 2)
+                            end = min(rlen, start + k)
+                            start = max(0, end - k)
+                            sel_mask[i, start:end] = True
+                elif args.token_select_mode == "last":
+                    for i in range(mb_size):
+                        k = mb_distill_counts[i]
+                        rlen = mb_resp_lens[i]
+                        if rlen <= k:
+                            sel_mask[i, :rlen] = True
+                        else:
+                            sel_mask[i, rlen-k:rlen] = True
+                elif args.token_select_mode == "reopold":
+                    # REOPOLD: entropy-guided dynamic masking — keep top beta% highest-entropy tokens
+                    with torch.no_grad():
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        ent_per_pos = -(ps * s_log_probs_resp.detach()).sum(dim=-1)
+                        ent_per_pos[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            rlen = mb_resp_lens[i]
+                            k = max(1, int(rlen * args.reopold_beta))  # dynamic: beta% of response length
+                            topk_idx = torch.topk(ent_per_pos[i, :rlen], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
                 else:
                     raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
 
@@ -1452,6 +1500,9 @@ def main():
                     else:
                         raise ValueError(f"Unknown loss_type: {args.loss_type}")
 
+                    # Reward clipping (REOPOLD): cap extreme per-token KL values
+                    if args.reward_clip > 0:
+                        per_pos_kl = per_pos_kl.clamp(max=args.reward_clip)
                     # Mask: only selected positions contribute
                     per_pos_kl = per_pos_kl * sel_mask.float()
                     # Average over selected positions, then over batch

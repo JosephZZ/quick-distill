@@ -118,6 +118,8 @@ def main():
     parser.add_argument("--output_dir", type=str, default="eval_results")
     parser.add_argument("--dataset", type=str, default="HuggingFaceH4/MATH-500")
     parser.add_argument("--split", type=str, default="test")
+    parser.add_argument("--problem_field", type=str, default="problem", help="Field name for problem text")
+    parser.add_argument("--answer_field", type=str, default="solution", help="Field name for ground truth (solution text or direct answer)")
     parser.add_argument("--n_samples", type=int, default=1, help="Number of samples per problem")
     parser.add_argument("--temperature", type=float, default=0.0)
     parser.add_argument("--max_new_tokens", type=int, default=2048)
@@ -164,7 +166,7 @@ def main():
     prompts = []
     ground_truths = []
     for example in ds:
-        question = example["problem"] + " " + instruction
+        question = example[args.problem_field] + " " + instruction
         chat_kwargs = dict(tokenize=False, add_generation_prompt=True)
         try:
             prompt = tokenizer.apply_chat_template(
@@ -176,7 +178,11 @@ def main():
                 [{"role": "user", "content": question}], **chat_kwargs,
             )
         prompts.append(prompt)
-        gt = extract_answer(example["solution"])
+        raw_answer = example[args.answer_field]
+        gt = extract_answer(raw_answer)
+        if gt is None:
+            # If extract_answer fails (e.g. answer is a plain number), use raw value directly
+            gt = str(raw_answer).strip()
         ground_truths.append(gt)
 
     print(f"Generating responses for {len(prompts)} problems...")
@@ -244,7 +250,7 @@ def main():
 
             result = {
                 "idx": i,
-                "question": ds[i]["problem"],
+                "question": ds[i].get(args.problem_field, ds[i].get("problem", "")),
                 "ground_truth": gt,
                 "responses": response_evals,
                 "pass_correct": pass_hit,

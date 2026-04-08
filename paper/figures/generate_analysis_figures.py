@@ -96,9 +96,9 @@ plt.close()
 # ============================================================
 fig_sweep, ax_sw = plt.subplots(1, 1, figsize=(5.5, 3.5))
 
-# n16bs16 data (best avg@4 across steps, consistent config)
+# n1bs16 data (best avg@4 across steps, 3200 problems)
 N_values = [5, 10, 20, 50, 100, 150, 200]
-best_avg4 = [56.50, 59.50, 60.20, 62.45, 64.25, 65.70, 66.75]
+best_avg4 = [58.65, 57.10, 56.60, 66.65, 65.85, 66.65, 66.05]
 
 ax_sw.plot(N_values, best_avg4, 'o-', color='#2196F3', linewidth=2, markersize=7, zorder=3)
 
