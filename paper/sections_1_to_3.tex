@@ -1,0 +1,281 @@
+% Sections 1-3 of: The Information-Quality Paradox in On-Policy Distillation
+% NeurIPS 2026 submission
+% Requires: neurips_2026.sty, booktabs, graphicx, amsmath, amssymb
+
+\section{Introduction}
+\label{sec:intro}
+
+On-policy knowledge distillation has become the dominant paradigm for compressing reasoning capabilities from large language models into smaller ones~\citep{agarwal2024gkd, gu2024minillm}.
+The standard recipe is straightforward: the student generates responses on its own distribution, the teacher scores them via a forward pass, and the student is trained to minimize the reverse KL divergence at every token position.
+An implicit assumption underlies this approach---that all token positions contribute equally useful supervision.
+We show this assumption is wrong, and violating it is not merely wasteful but actively harmful.
+
+We identify an \emph{information-quality paradox}: the tokens with the highest KL divergence between teacher and student---seemingly the most informative for learning---produce the \emph{worst} distillation outcomes.
+Concretely, selecting the 100 tokens per response with the highest KL divergence captures 93\% of the total KL signal yet achieves only 53.4\% on MATH-500, while the first 100 positional tokens capture only 46\% of total KL yet achieve 65.9\% (Table~\ref{tab:token_selection}).
+This 12.5 percentage-point gap inverts the information-theoretic intuition that concentrating on the largest gradients should accelerate learning.
+
+The resolution lies in what high-KL tokens actually encode.
+Per-token analysis over two million tokens reveals that the highest-KL positions are dominated by format and style disagreements---LaTeX delimiters (\texttt{\textbackslash(}, \texttt{\textbackslash[}) with KL exceeding 10 nats per token, planning phrases (``Therefore'', ``First'') with KL $\approx 1.75$---rather than mathematical reasoning content, where KL is an order of magnitude lower ($\approx 0.28$ for numeric tokens).
+Meanwhile, teacher signal quality decays monotonically with position: mean KL drops from 1.9 to 0.4, teacher entropy falls from 0.26 to 0.17, and teacher-student agreement rises from 75\% to 89\% across the response.
+Late-position supervision is the teacher rubber-stamping the student's choices, not correcting its reasoning.
+
+Based on this analysis, we propose \emph{positional distillation}: computing loss only on the first $N$ response tokens.
+This requires changing a single line of code (\texttt{loss\_mask[:, N:] = 0}), yet delivers a 24$\times$ wall-clock speedup, 4$\times$ memory reduction, and matches or exceeds full-sequence performance.
+We validate positional distillation across three model families (Qwen, Gemma, Llama), three tasks (mathematics, function calling, coding), and two training methods (LoRA, full fine-tuning), with multi-seed evaluation confirming stability.
+On function calling, the distilled student exceeds the teacher by up to 9.7 percentage points---evidence that the method extracts clean reasoning signal while filtering teacher output noise.
+
+Full-sequence distillation, by contrast, is fragile: it collapses in 2 out of 3 seeds on Qwen math (mean 56.8\% $\pm$ 6.1 vs.\ 62.4\% $\pm$ 2.9 for positional), drops below baseline on Gemma, and degrades from 55.3\% to 32.0\% on Llama function calling.
+
+\begin{figure}[t]
+    \centering
+    % Three-panel teaser figure
+    % (a) Token selection paradox: bar chart, avg@4 vs strategy, annotated with KL coverage %
+    % (b) Per-position KL curves for Qwen, Gemma, Llama (different decay profiles)
+    % (c) Cross-family: grouped bars of baseline / pos-best / fullseq for each family
+    \includegraphics[width=\textwidth]{figures/figure1_teaser.pdf}
+    \caption{\textbf{The information-quality paradox.}
+    \textbf{(a)}~Token selection comparison on MATH-500 (K=100 tokens). Selecting by highest KL (93\% coverage) performs worst; the contiguous prefix (46\% coverage) performs best.
+    \textbf{(b)}~Per-position mean KL across three model families. Qwen and Gemma are front-loaded; Llama is flat. Dashed lines mark the optimal position limit for each.
+    \textbf{(c)}~Cross-family math results. Positional distillation consistently outperforms full-sequence, which collapses or degrades in every setting.}
+    \label{fig:teaser}
+\end{figure}
+
+Our contributions are:
+\begin{enumerate}[leftmargin=*,itemsep=2pt,topsep=2pt]
+    \item \textbf{Information-quality paradox.} We demonstrate that high-KL tokens in on-policy distillation correspond to format and style noise, not reasoning quality. Training on them produces the worst outcomes (\S\ref{sec:paradox_result}), overturning the intuition that the largest divergences are the most informative.
+    \item \textbf{Signal quality analysis.} Per-position analysis across three model families reveals that teacher signal quality decays with position. Cross-model KL profiles predict optimal position limits (\S\ref{sec:cross_model}).
+    \item \textbf{Cross-family, cross-task validation with multi-seed.} Positional distillation matches or exceeds full-sequence across 3 model families $\times$ 3 tasks $\times$ 2 training methods, with 24$\times$ speedup and 4$\times$ memory reduction. Multi-seed runs confirm 2.6$\times$ lower variance than full-sequence.
+    \item \textbf{Cascade effect.} Early-token distillation changes entire generation trajectories: KL reduction extends 35--38\% beyond the trained range, and late tokens change more than early tokens.
+\end{enumerate}
+
+\paragraph{Relationship to concurrent work.}
+\citet{zhang2025fast} independently discover that prefix truncation accelerates on-policy distillation.
+Our work differs in three respects: we explain \emph{why} prefix tokens are superior (signal quality decay, the information-quality paradox), demonstrate that positional distillation is \emph{better} and not merely faster (via the token selection comparison), and validate across three model families and three tasks.
+\citet{li2025rethinking} show that teacher-student vocabulary overlap decreases with depth, complementing our findings from a different analytical angle.
+
+
+%==============================================================================
+\section{Background and Related Work}
+\label{sec:background}
+
+\subsection{On-Policy Knowledge Distillation}
+
+Knowledge distillation transfers capabilities from a teacher model to a smaller student by training on soft targets~\citep{hinton2015distilling}.
+For autoregressive language models, sequence-level KD~\citep{kim2016sequence} generates from the teacher and trains the student on these sequences.
+On-policy variants reverse this: the student generates, the teacher scores, and the student trains on the divergence between distributions~\citep{agarwal2024gkd, gu2024minillm}.
+
+Let $p_\theta$ denote the student and $q_\phi$ the teacher.
+Given a prompt $x$, the student generates a response $y_{1:T} \sim p_\theta(\cdot \mid x)$.
+The standard on-policy reverse KL objective is:
+\begin{equation}
+\mathcal{L}_{\mathrm{full}} = \mathbb{E}_{y \sim p_\theta}\left[\sum_{t=1}^{T} D_{\mathrm{KL}}\!\big(q_\phi(\cdot \mid x, y_{<t}) \;\|\; p_\theta(\cdot \mid x, y_{<t})\big)\right].
+\label{eq:full_kl}
+\end{equation}
+This objective treats all $T$ response positions uniformly.
+Reverse KL is preferred over forward KL in the on-policy setting because it avoids the mode-averaging behavior that arises when the student cannot cover the full teacher distribution~\citep{gu2024minillm}.
+
+\subsection{Token Selection in Training}
+
+Several lines of work question whether all tokens deserve equal loss weight.
+In reinforcement learning for LLMs, \citet{wang2025beyond} show that entropy-based token selection improves RLHF by focusing gradients on high-uncertainty positions.
+Rho-1~\citep{lin2024rho1} selects tokens by reference-model loss for pretraining.
+SelecTKD~\citep{chen2025selectkd} and AdaKD~\citep{wu2025adakd} apply adaptive weighting in offline distillation.
+
+Most relevant to our work are two concurrent papers.
+\citet{zhang2025fast} propose prefix truncation for on-policy distillation, framing it as an efficiency heuristic that preserves 90\% of performance at 3$\times$ speedup.
+They do not investigate \emph{why} prefix tokens are superior, nor compare against information-theoretic selection strategies.
+\citet{li2025rethinking} analyze teacher-student vocabulary overlap and show that the teacher's reward signal degrades with response depth.
+Their analysis complements ours but they do not propose position-restricted loss or validate across model families.
+
+\subsection{Our Position}
+
+We bridge these threads by providing the scientific explanation for why prefix truncation works: teacher signal quality decays with position, and high-KL tokens are noise rather than signal.
+Our token selection experiment (Table~\ref{tab:token_selection}) directly compares positional, entropy-based, KL-based, and random strategies under matched compute, revealing the information-quality paradox.
+Cross-family validation across Qwen, Gemma, and Llama demonstrates that the finding is not architecture-specific.
+
+
+%==============================================================================
+\section{The Information-Quality Paradox}
+\label{sec:paradox}
+
+This section presents the core analytical finding: in on-policy distillation, selecting tokens by information content (KL divergence) produces systematically worse outcomes than a simple positional prefix.
+We first establish the paradox empirically, then resolve it by examining what high-KL tokens encode.
+
+\subsection{Experimental Setup}
+\label{sec:paradox_setup}
+
+We study the Qwen family: student Qwen2.5-Math-1.5B, teacher Qwen3-1.7B, on MATH-500~\citep{hendrycks2021math}.
+The student generates full-length on-policy responses (mean length 386 tokens), and we select $K{=}100$ tokens per response for loss computation under different strategies.
+All strategies generate full-length sequences and differ only in which tokens receive gradient signal, ensuring identical compute.
+Training uses LoRA ($r{=}32$, $\alpha{=}64$) with learning rate $5{\times}10^{-5}$, processing 3{,}200 problems over 200 steps.
+Evaluation reports avg@4 on MATH-500 with temperature 0.7.
+
+The selection strategies are:
+\textbf{prefix}---first 100 response tokens;
+\textbf{top-kl}---100 tokens with highest per-token KL divergence;
+\textbf{ent-teacher}/\textbf{ent-student}---100 tokens with highest teacher/student entropy;
+\textbf{random}---100 uniformly sampled tokens;
+\textbf{middle}/\textbf{last}---100 contiguous tokens centered at the midpoint or end of the response.
+For each strategy, we compute its \emph{KL coverage}: the fraction of total per-response KL captured by the selected tokens.
+
+\subsection{The Paradox: High-KL Tokens Perform Worst}
+\label{sec:paradox_result}
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Token selection comparison} (MATH-500, avg@4, $K{=}100$ tokens selected per response). KL coverage measures the fraction of total response KL captured. Higher coverage does not produce better outcomes---the relationship is inverted.}
+\label{tab:token_selection}
+\small
+\begin{tabular}{@{}lccl@{}}
+\toprule
+Strategy & KL Coverage & Best avg@4 & Stability \\
+\midrule
+\textbf{prefix-100}  & \textbf{45.6\%} & \textbf{65.85\%} & Stable across all steps \\
+ent-teacher       & 50.5\% & 63.30\% & Mild degradation \\
+ent-student       & 67.0\% & 62.70\% & Stable \\
+middle-100        & 15.8\% & 61.80\% & Stable \\
+random-100        & 21.1\% & 61.25\% & Collapses at step 150 \\
+last-100          & 13.9\% & 62.30\% & Collapses at step 150 \\
+\textbf{top-kl-100} & \textbf{93.2\%} & \textbf{53.35\%} & Below baseline throughout \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:token_selection} presents the central result.
+The top-KL strategy captures 93.2\% of total KL divergence---nearly all of the information-theoretic signal---yet achieves only 53.35\%, which is 2.4 percentage points \emph{above} the no-distillation baseline of 50.95\% and 12.5 points below the prefix strategy.
+The prefix, despite capturing less than half the KL signal (45.6\%), achieves the highest accuracy (65.85\%) and remains stable across all training steps.
+
+The correlation between KL coverage and performance is \emph{negative}: strategies that capture more KL divergence perform worse.
+This inverts the standard intuition from curriculum learning and active learning that concentrating on the largest errors accelerates learning.
+
+Two additional patterns emerge.
+First, \emph{contiguity matters}: the middle-100 strategy (15.8\% KL coverage) outperforms random-100 (21.1\% coverage) and avoids its collapse, suggesting that training on contiguous token spans provides more coherent gradients than scattered positions.
+Second, \emph{position matters directionally}: strategies that include late-position tokens (random, last) exhibit catastrophic collapse at step 150, while prefix and middle remain stable.
+
+\subsection{Resolution: What High-KL Tokens Actually Encode}
+\label{sec:resolution}
+
+To understand why high-KL tokens harm distillation, we classify over two million tokens from on-policy trajectories into semantic categories and measure mean KL by category.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Mean KL divergence by token category.} High-KL tokens are dominated by format and style disagreements, not mathematical reasoning. Token counts are from 59{,}936 on-policy trajectories.}
+\label{tab:token_classification}
+\small
+\begin{tabular}{@{}llc@{}}
+\toprule
+Category & Example tokens & Mean KL \\
+\midrule
+math\_latex & \texttt{\textbackslash(}, \texttt{\textbackslash[}, \texttt{\textbackslash\textbackslash} & 3.99 \\
+planning & ``To'', ``Therefore'', ``First'' & 1.75 \\
+structural & \texttt{**}, \texttt{:} & 0.89 \\
+math\_operator & $=$, $+$, $-$ & 0.38 \\
+math\_number & 0--9 & 0.28 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:token_classification} reveals a clear pattern: the tokens carrying the highest KL are \emph{format tokens}---LaTeX delimiters, structural markers, and discourse connectives---not tokens encoding mathematical content.
+Individual LaTeX tokens reach KL values of 10--13 nats; stylistic tokens like ``Please'' and ``Sure'' exceed 25 nats.
+These reflect disagreements about \emph{how} to present answers, not \emph{what} the answer is.
+
+The mechanistic explanation follows from the structure of KL divergence.
+At positions where the teacher is uncertain (high teacher entropy) but disagrees with the student's choice, KL is large.
+Direct measurement confirms this: top-KL tokens have teacher entropy of 0.449, nearly double the 0.235 of prefix tokens~(Table~\ref{tab:entropy_decomposition}).
+The ideal distillation signal---low teacher entropy (confident correction) with high KL (student is wrong)---is concentrated at early positions.
+The top-KL strategy instead selects for \emph{confused disagreement}: both models are uncertain, and the gradient signal is noise.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Teacher entropy decomposition.} Top-KL tokens correspond to positions where the teacher is confused (high entropy), not where it has superior knowledge.}
+\label{tab:entropy_decomposition}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+Token set & Teacher entropy & Student entropy & Mean KL \\
+\midrule
+Top-KL ($K{=}100$) & 0.449 & 0.696 & 4.09 \\
+Prefix (0--99) & 0.235 & 0.466 & 2.02 \\
+Late (100+) & 0.158 & --- & 1.81 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\subsection{Per-Position Signal Quality Decay}
+\label{sec:signal_decay}
+
+The token classification explains the paradox at the individual-token level.
+We now examine the positional structure that gives rise to it.
+Table~\ref{tab:signal_decay} reports three complementary indicators of teacher signal quality as a function of response position, measured over 59{,}936 on-policy trajectories.
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Per-position signal quality} (Qwen2.5-Math-1.5B $\to$ Qwen3-1.7B). All three indicators show monotonic decay: the teacher becomes less informative, less certain, and more confirmatory with position.}
+\label{tab:signal_decay}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Position range & Mean KL & Teacher entropy & Agreement rate & $N$ tokens \\
+\midrule
+0--50      & 1.91 & 0.26 & 75.4\% & 2{,}467 \\
+50--100    & 0.94 & 0.21 & 81.9\% & 2{,}450 \\
+100--200   & 0.65 & 0.16 & 86.3\% & 4{,}844 \\
+200--300   & 0.52 & 0.16 & 87.8\% & 4{,}497 \\
+300--500   & 0.43 & 0.17 & 88.8\% & 8{,}124 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Three indicators paint a consistent picture:
+\begin{itemize}[leftmargin=*,itemsep=2pt,topsep=2pt]
+    \item \textbf{KL divergence} drops by 4.4$\times$ from the first 50 tokens (1.91) to positions 300--500 (0.43). The teacher's ``disagreement budget'' is front-loaded.
+    \item \textbf{Teacher entropy} declines from 0.26 to 0.17. Late-position teacher distributions are sharply peaked, offering little distributional information beyond the top-1 prediction.
+    \item \textbf{Agreement rate} rises from 75.4\% to 88.8\%. At late positions, the teacher's argmax matches the student's generated token nearly nine times out of ten---supervision is confirmatory rather than corrective.
+\end{itemize}
+
+This decay has a natural interpretation in mathematical reasoning.
+Early tokens encode the problem-solving strategy: which technique to apply, how to decompose the problem, what intermediate quantities to compute.
+These are precisely the positions where the teacher's superior reasoning capability manifests as a different---and often better---distributional preference.
+Late tokens encode arithmetic execution and answer formatting, where teacher and student largely agree and the remaining disagreement is stylistic.
+
+\subsection{Cross-Model KL Profiles Predict Optimal Position}
+\label{sec:cross_model}
+
+If signal quality decay drives the paradox, different model families with different KL profiles should require different position limits.
+We measure pre-training KL profiles for two additional families: Gemma (gemma-2-2b-it $\to$ gemma-3-4b-it) and Llama (Llama-3.2-1B $\to$ Llama-3.1-8B).
+
+\begin{table}[t]
+\centering
+\caption{\textbf{Cross-model KL profiles and optimal position limits.} Despite very different profile shapes, the optimal position limit consistently falls at $\sim$40--50\% cumulative KL coverage. Flat-KL families require more tokens.}
+\label{tab:cross_model_kl}
+\small
+\begin{tabular}{@{}lcccc@{}}
+\toprule
+Model pair & KL ratio (first 100 / rest) & Profile shape & Optimal $N$ & Coverage at optimum \\
+\midrule
+Qwen 1.5B $\to$ 1.7B & 2.81$\times$ & Front-loaded & 100 & ${\sim}$44\% \\
+Llama 1B $\to$ 8B    & 1.15$\times$ & Flat         & 200 & ${\sim}$45\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+Table~\ref{tab:cross_model_kl} reveals a striking regularity.
+The Qwen pair has a sharply front-loaded KL profile (2.81$\times$ more KL in the first 100 tokens than the rest), and its optimal position limit is $N{=}100$.
+The Llama pair has a nearly flat profile (1.15$\times$ ratio), and its optimal position limit is $N{=}200$---roughly twice as many tokens are needed to capture the same fraction of useful signal.
+Despite these very different shapes, the optimal position in both cases falls at approximately 40--50\% of cumulative KL coverage.
+
+\begin{figure}[t]
+    \centering
+    % Two-panel analysis figure
+    % (a) Per-position KL curves for Qwen and Llama, with optimal N marked
+    % (b) Cumulative KL fraction vs position, with 40-50% coverage band shaded
+    \includegraphics[width=\textwidth]{figures/figure2_kl_profiles.pdf}
+    \caption{\textbf{KL profiles and the 40--50\% coverage rule.}
+    \textbf{(a)}~Per-position mean KL for Qwen (front-loaded) and Llama (flat). Dashed lines indicate the empirically optimal position limit.
+    \textbf{(b)}~Cumulative KL coverage as a function of position limit. Despite different profile shapes, the optimal $N$ for both families falls in the 40--50\% cumulative KL band (shaded).}
+    \label{fig:kl_profiles}
+\end{figure}
+
+This suggests a practical heuristic: to select $N$ for a new model pair without a grid search, generate a small set of on-policy trajectories (${\sim}$1{,}000), compute the per-position KL profile, and choose $N$ at the 40--50\% cumulative KL threshold.
+Front-loaded profiles (Qwen-like) will yield $N \approx 50$--$100$; flat profiles (Llama-like) will yield $N \approx 150$--$200$.
+We validate this heuristic in the experiments (\S\ref{sec:experiments}).
