@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "scripts": {
+    "dev": "slidev --port 3131",
+    "build": "slidev build",
+    "export": "slidev export"
+  },
+  "dependencies": {
+    "@slidev/cli": "^52.14.1",
+    "@slidev/theme-default": "latest"
+  }
+}
