@@ -16,7 +16,7 @@
 
 ### KL reduces 35–38% even at positions the model was **never trained on**.
 
-<br>
+<img src="/images/fig5_cascade.png" style="max-width: 85%; max-height: 40vh; object-fit: contain; margin: 0 auto; display: block;" />
 
 **Why?** Autoregressive generation means every token conditions all subsequent tokens. Better early decisions → better entire trajectory.
 

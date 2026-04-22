@@ -24,14 +24,9 @@ As $t$ grows, the teacher is increasingly **conditioned on the student's prefix*
 </div>
 <div style="width: 55%;">
 
-### The evidence (Qwen 1.5B → 1.7B):
+### The evidence:
 
-| Position | KL | Teacher Ent | Agreement |
-|----------|-----|-----------|-----------|
-| 0–50 | **1.91** | 0.26 | 75% |
-| 50–100 | 0.94 | 0.21 | 82% |
-| 100–200 | 0.65 | 0.16 | 86% |
-| 300–500 | 0.43 | 0.17 | **89%** |
+<img src="/images/fig1_kl_decay.png" style="max-width: 100%; max-height: 55vh; object-fit: contain; margin: 0;" />
 
 KL drops **4.4×**. Agreement rises from 75% to 89%.
 

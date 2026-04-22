@@ -20,7 +20,7 @@ We compare 7+ strategies, all selecting K=100 tokens from full-length responses:
 
 ### The paradox: **93% KL coverage → worst result. 46% coverage → best result.**
 
-The correlation between KL coverage and performance is **negative**.
+<img src="/images/fig2_token_paradox.png" style="max-width: 80%; max-height: 35vh; object-fit: contain; margin: 0 auto; display: block;" />
 
 <!--
 [~2 min]
