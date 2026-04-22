@@ -36,24 +36,27 @@ Note: intermediate step evals failed (script bug). Only step 200 eval available 
 |------|-------|
 | 200 | **20.10%** |
 
-## Summary: All Methods
+## Summary: All Methods (fixed nothink bug)
 
-| Method | Best avg@4 | vs Baseline |
-|--------|-----------|-------------|
-| Baseline | 15.20% | — |
-| LoRA pos-100 | 18.95% | +3.75pp |
-| **LoRA fullseq** | **20.35%** | **+5.15pp** |
-| FullFT pos-100 | 12.80% ⚠️ | -2.40pp |
-| **FullFT fullseq** | **20.10%** | **+4.90pp** |
+### LoRA Math (MATH-500 avg@4, baseline 15.20%)
 
-## Fixed Results (nothink bug corrected — no <think> tokens for Llama)
+| Position | avg@4 | vs Baseline |
+|----------|-------|-------------|
+| pos-100 | 12.35% ⚠️ | -2.85pp |
+| pos-150 | 18.75% | +3.55pp |
+| **pos-200** | **22.45%** | **+7.25pp** |
+| pos-300 | 20.75% | +5.55pp |
+| fullseq | 20.65% | +5.45pp |
 
-| Method | Bug version | Fixed version |
-|--------|------------|--------------|
-| LoRA pos-100 | 17.35% | **12.35%** ⚠️ |
-| LoRA fullseq | 20.35% | **20.65%** |
+### FullFT Math (MATH-500 avg@4, baseline 15.20%)
 
-The nothink bug actually HELPED pos-100 slightly (the garbage `<think>` tokens accidentally added some noise that acted as regularization). Fullseq unaffected.
+| Position | avg@4 | vs Baseline |
+|----------|-------|-------------|
+| pos-100 | 12.80% ⚠️ | -2.40pp |
+| pos-150 | 14.20% | -1.00pp |
+| pos-200 | 16.80% | +1.60pp |
+| pos-300 | 17.80% | +2.60pp |
+| fullseq | 20.10% | +4.90pp |
 
 ## Pre-training KL Profile (50 problems, 512 tokens)
 
