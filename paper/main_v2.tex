@@ -53,7 +53,7 @@
 On-policy knowledge distillation (KD) trains a student model on reverse KL loss over its own generated sequences.
 The standard approach computes loss uniformly across all token positions, implicitly assuming each position contributes equally.
 We show this assumption is wrong and harmful: teacher signal quality \emph{decays with position}, as later tokens increasingly reflect the teacher confirming the student's prefix rather than providing independent judgment.
-We identify an \emph{information-quality paradox}: tokens with the highest KL divergence---seemingly the most informative---produce the worst distillation outcomes (58.6\% on MATH-500), while a contiguous prefix capturing only 46\% of total KL signal achieves 65.9\%.
+We identify an \emph{information-quality paradox}: tokens with the highest KL divergence---seemingly the most informative---produce the worst distillation outcomes (53.4\% on MATH-500), while a contiguous prefix capturing only 46\% of total KL signal achieves 65.85\%.
 High-KL tokens correspond to format and style disagreements (LaTeX notation, code blocks), not reasoning quality.
 Based on this analysis, we propose \emph{positional distillation}: computing loss only on the first $N$ response tokens---a one-line code change (\texttt{loss\_mask[:, N:] = 0}).
 Positional distillation achieves 12--24$\times$ wall-clock speedup, 4$\times$ memory reduction, and matches or exceeds full-sequence performance across 3 model families (Qwen, Gemma, Llama), 3 tasks (mathematical reasoning, function calling, code generation), and 2 training methods (LoRA, full fine-tuning).
@@ -84,8 +84,8 @@ We quantify this decay across 59,936 trajectories: mean KL divergence falls from
 \textbf{The information-quality paradox.}
 A natural response to signal decay would be to train on tokens with the highest KL divergence---targeting where teacher and student disagree most.
 We show this intuition is precisely wrong.
-Training on the top-100 highest-KL tokens captures 93\% of total KL signal but achieves only 58.6\% on MATH-500.
-Training on the first 100 positional tokens captures merely 46\% of KL signal yet achieves 65.9\%.
+Training on the top-100 highest-KL tokens captures 93\% of total KL signal but achieves only 53.4\% on MATH-500.
+Training on the first 100 positional tokens captures merely 46\% of KL signal yet achieves 65.85\%.
 The resolution: high-KL tokens are dominated by LaTeX formatting disagreements (mean KL = 3.99) and stylistic preferences, not reasoning quality.
 The teacher's confusion about format is not useful supervision.
 
@@ -107,7 +107,7 @@ Our contributions are:
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_teaser.pdf}
   \caption{\textbf{The positional structure of distillation signal.}
-  (a) \emph{Information-quality paradox}: training on the top-100 highest-KL tokens (93\% of KL signal) achieves only 58.6\%, while the first 100 positional tokens (46\% coverage) achieve 65.9\%. Middle and last-100 tokens perform below the undistilled baseline.
+  (a) \emph{Information-quality paradox}: training on the top-100 highest-KL tokens (93\% of KL signal) achieves only 53.4\%, while the first 100 positional tokens (46\% coverage) achieve 65.85\%. Middle and last-100 tokens perform below the undistilled baseline.
   (b) \emph{KL decay across model families}: per-position KL divergence for Qwen (front-loaded, 2.81$\times$ ratio), Gemma, and Llama (flat, 1.15$\times$ ratio). Vertical lines mark optimal $N$ for each family.
   (c) \emph{Cross-family math results}: positional distillation matches or exceeds full-sequence across all three families; full-sequence collapses for Gemma (below baseline) and is unstable for Qwen.}
   \label{fig:teaser}
@@ -251,8 +251,8 @@ We compare seven token selection strategies, each selecting $K=100$ tokens per s
 Random-100                   & 21.1           & 63.05          & Stable \\
 Ent-Teacher-100              & 50.5           & 62.20          & Degrades \\
 Full-sequence                & 100.0          & 62.35          & Degrades \\
-Ent-Student-100              & $\sim$45       & 61.35          & Degrades \\
-Top-KL-100                   & \textbf{93.2}  & 58.60          & Collapses \\
+Ent-Student-100              & 67.0           & 62.70          & Partial \\
+Top-KL-100                   & \textbf{93.2}  & \textbf{53.35} & Collapses \\
 \cdashline{1-4}
 Last-100                     & $\sim$15       & 50.35          & Below baseline \\
 Baseline (no distill)        & ---            & 50.95          & --- \\
@@ -265,11 +265,11 @@ Middle-100                   & $\sim$30       & 47.80          & Below baseline 
 \begin{figure}[t]
   \centering
   \includegraphics[width=0.65\textwidth]{figures/fig2_token_paradox.pdf}
-  \caption{\textbf{The information-quality paradox.} Despite capturing 93\% of KL signal, top-KL token selection achieves only 58.6\%, while the positional prefix (46\% coverage) achieves 65.9\%. The paradox resolves when we examine what high-KL tokens actually are: format disagreements where the teacher is confused, not superior.}
+  \caption{\textbf{The information-quality paradox.} Despite capturing 93\% of KL signal, top-KL token selection achieves only 53.4\%, while the positional prefix (46\% coverage) achieves 65.85\%. The paradox resolves when we examine what high-KL tokens actually are: format disagreements where the teacher is confused, not superior.}
   \label{fig:paradox}
 \end{figure}
 
-The result is striking: Top-KL-100 captures 93\% of total KL signal but achieves only 58.6\%---7.3pp \emph{worse} than Prefix-100, which captures only 46\%.
+The result is striking: Top-KL-100 captures 93\% of total KL signal but achieves only 53.4\%---7.3pp \emph{worse} than Prefix-100, which captures only 46\%.
 More signal concentration yields worse outcomes.
 Middle-100 (47.8\%) and Last-100 (50.4\%) perform \emph{below the undistilled baseline} (51.0\%), demonstrating that late-position tokens are not merely uninformative but actively harmful.
 
