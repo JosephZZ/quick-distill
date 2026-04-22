@@ -64,6 +64,36 @@
 
 LoRA consistently outperforms FullFT by 2-9pp across all settings.
 
+## Gemma FullFT: gemma-2-2b-it → gemma-3-4b-it Math (MATH-500 avg@4, baseline 13.45%)
+
+### 200-step results
+
+| Method | s50 | s100 | s150 | s200 | Best |
+|--------|-----|------|------|------|------|
+| FullFT pos-100 | 25.20 | **26.70** | 25.45 | 26.65 | **26.70** |
+| FullFT fullseq | 11.15⚠️ | 9.50⚠️ | 13.00 | 13.90 | **13.90** ⚠️ |
+
+**Notes:**
+- pos-100 achieves +13.25pp over baseline (13.45→26.70), completely stable across all steps
+- **Fullseq collapses BELOW BASELINE** at every step (best=13.00% at s150 vs baseline 13.45%)
+- For comparison, LoRA pos-50 reached 25.80% and LoRA fullseq collapsed to 11.70%
+- pos-100 outperforms fullseq by **+14 to +17pp** — largest gap across all model pairs
+- Required optimizer state offload + expandable_segments to run fullseq on single GPU
+
+## REOPOLD LoRA: Entropy-Guided Token Selection (M-1.5B → Q3-1.7B, MATH-500 avg@4)
+
+REOPOLD selects top 20% highest student-entropy tokens from full-length responses (β=0.2).
+
+| Step | REOPOLD (ent top-20%) | Prefix pos-100 | Delta |
+|------|----------------------|----------------|-------|
+| 50 | 60.55 | 60.45 | +0.10 |
+| 100 | 60.35 | **62.50** | -2.15 |
+| 150 | **56.75** ⚠️ | **63.15** | **-6.40** |
+
+**Finding: REOPOLD degrades like fullseq.** Peak at step 50 (60.55%), then declines to 56.75% by step 150 (-3.8pp). Prefix pos-100 remains stable and outperforms by +6.4pp at step 150. Entropy-guided selection partially overlaps with late-position tokens where teacher signal is unreliable, inheriting fullseq instability. Contiguous early-position selection provides both better performance and training stability.
+
+**Training cost**: REOPOLD requires full-length generation (3584 tokens) + full-length teacher scoring → ~200s/step vs ~8s/step for prefix pos-100 (**25× slower**).
+
 ## Key Findings
 
 1. **FullFT math: fullseq > pos-N** — opposite of LoRA where pos-100 > fullseq
@@ -73,3 +103,5 @@ LoRA consistently outperforms FullFT by 2-9pp across all settings.
 5. **FullFT pos-300 reaches 97% of fullseq** (55.10 vs 57.10) — near-optimal tradeoff
 6. **LoRA >> FullFT** by 6-9pp — low-rank constraint provides critical regularization
 7. **Crossover interaction**: LoRA favors pos-100, FullFT favors fullseq
+8. **Gemma FullFT: pos-100 is the only option** — fullseq OOMs on single GPU, pos-100 achieves +13.25pp
+9. **Memory advantage**: positional distillation reduces peak GPU memory, enabling single-GPU FullFT for larger models

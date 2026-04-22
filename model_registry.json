@@ -1,0 +1,20 @@
+{
+  "_comment": "Registry of model capabilities. thinking=true means model supports enable_thinking in chat template and needs nothink prefix for non-thinking generation.",
+  "models": {
+    "Qwen/Qwen3-1.7B": {"thinking": true},
+    "Qwen/Qwen3-4B": {"thinking": true},
+    "Qwen/Qwen3-8B": {"thinking": true},
+    "Qwen/Qwen3.5-2B": {"thinking": true},
+    "Qwen/Qwen3.5-4B": {"thinking": true},
+    "Qwen/Qwen3.5-9B": {"thinking": true},
+    "Qwen/Qwen2.5-Math-1.5B": {"thinking": false},
+    "Qwen/Qwen2.5-1.5B-Instruct": {"thinking": false},
+    "google/gemma-2-2b-it": {"thinking": false},
+    "google/gemma-3-1b-it": {"thinking": true},
+    "google/gemma-3-4b-it": {"thinking": true},
+    "google/gemma-3-12b-it": {"thinking": true},
+    "meta-llama/Llama-3.2-1B-Instruct": {"thinking": false},
+    "meta-llama/Llama-3.2-3B-Instruct": {"thinking": false},
+    "meta-llama/Llama-3.1-8B-Instruct": {"thinking": false}
+  }
+}

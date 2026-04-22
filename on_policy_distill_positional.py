@@ -49,7 +49,7 @@ def _supports_system_role(tokenizer):
         return False
 
 
-def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
+def build_prompt(problem: str, tokenizer, system_prompt: str = None, enable_thinking: bool = False) -> str:
     if system_prompt is None:
         system_prompt = "Please reason step by step, and put your final answer within \\boxed{}."
     if _supports_system_role(tokenizer):
@@ -64,7 +64,7 @@ def build_prompt(problem: str, tokenizer, system_prompt: str = None) -> str:
         ]
     kwargs = dict(tokenize=False, add_generation_prompt=True)
     if _supports_thinking(tokenizer):
-        kwargs["enable_thinking"] = False
+        kwargs["enable_thinking"] = enable_thinking
     return tokenizer.apply_chat_template(messages, **kwargs)
 
 
@@ -320,7 +320,7 @@ def query_teacher_cross_tokenizer(teacher_model, trajs, student_tokenizer, teach
     return results
 
 
-def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, temperature, gen_batch_size=0, system_prompt=None):
+def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, temperature, gen_batch_size=0, system_prompt=None, enable_thinking=False):
     """Generate trajectories using HF model.generate() directly — no subprocess or disk I/O."""
     eos_id = tokenizer.eos_token_id
     pad_id = tokenizer.pad_token_id or 0
@@ -330,7 +330,7 @@ def generate_hf(student, tokenizer, problems, n_samples, max_new_tokens, tempera
     all_prompts = []
     problem_indices = []  # track which problem each prompt belongs to
     for i, problem in enumerate(problems):
-        prompt_text = build_prompt(problem, tokenizer, system_prompt=system_prompt)
+        prompt_text = build_prompt(problem, tokenizer, system_prompt=system_prompt, enable_thinking=enable_thinking)
         for _ in range(n_samples):
             all_prompts.append(prompt_text)
             problem_indices.append(i)
@@ -841,9 +841,10 @@ def main():
         type=str,
         default="prefix",
         choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random",
-                 "middle", "last", "reopold"],
-        help="Which response tokens to distill: prefix (first N), top_kl, top_entropy_student, "
-             "top_entropy_teacher, random, middle, last, reopold (entropy-guided masking à la REOPOLD)",
+                 "middle", "last", "reopold", "ent_and", "ent_or", "ent_kl_and"],
+        help="Token selection: prefix, top_kl, top_entropy_student/teacher, random, middle, last, "
+             "reopold, ent_and (teacher*student entropy product), ent_or (teacher+student entropy sum), "
+             "ent_kl_and (high entropy AND high KL)",
     )
     parser.add_argument("--reopold_beta", type=float, default=0.2,
                        help="REOPOLD: fraction of highest-entropy tokens to keep (default 0.2 = top 20%%)")
@@ -873,6 +874,9 @@ def main():
                        help="System prompt for generation (default: math reasoning prompt)")
     parser.add_argument("--single_gpu", action="store_true",
                        help="Single-GPU mode: only one model on GPU at a time (student/teacher/sglang take turns)")
+    parser.add_argument("--enable_thinking", action="store_true",
+                       help="Enable thinking/CoT mode for models that support it (Qwen3, Gemma3). "
+                            "Student generates with thinking, teacher scores with thinking.")
 
     args = parser.parse_args()
     if args.vllm_gpu is None:
@@ -881,10 +885,11 @@ def main():
     single_gpu = args.single_gpu or (args.student_gpu == args.teacher_gpu == args.vllm_gpu)
     if single_gpu:
         print("Single-GPU mode: models will take turns on the GPU")
-    if args.token_select_mode not in ("prefix", "reopold") and args.position_limit <= 0:
+    _fullseq_modes = ("prefix", "reopold", "ent_and", "ent_or", "ent_kl_and")
+    if args.token_select_mode not in _fullseq_modes and args.position_limit <= 0:
         raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
-    if args.token_select_mode == "reopold" and args.position_limit <= 0:
-        args.position_limit = 0  # reopold uses dynamic percentage, not fixed K
+    if args.token_select_mode in ("reopold", "ent_and", "ent_or", "ent_kl_and") and args.position_limit <= 0:
+        args.position_limit = 0  # these modes use dynamic selection, not fixed K
 
     # Compute n_problems per step from bs and n_samples
     if args.bs % args.n_samples != 0:
@@ -925,16 +930,55 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.student_model, trust_remote_code=True)
     teacher_tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, trust_remote_code=True)
-    # Qwen3/Gemma3 thinking models need nothink prefix; others get empty list
+
+    # --- Thinking mode detection via model_registry.json ---
+    _registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_registry.json")
+    _registry = {}
+    if os.path.exists(_registry_path):
+        with open(_registry_path) as f:
+            _registry = json.load(f).get("models", {})
+
+    def _model_has_thinking(model_name, tok):
+        """Check if model supports thinking mode. Uses registry first, falls back to runtime detection."""
+        if model_name in _registry:
+            return _registry[model_name].get("thinking", False)
+        # Try to resolve snapshot paths: .../models--org--name/snapshots/... → org/name
+        import re as _re
+        _snap_match = _re.search(r'models--(.+?)--(.+?)/snapshots/', model_name)
+        if _snap_match:
+            _resolved = f"{_snap_match.group(1)}/{_snap_match.group(2)}"
+            if _resolved in _registry:
+                return _registry[_resolved].get("thinking", False)
+        # Model not in registry — detect at runtime and warn
+        detected = _supports_thinking(tok)
+        print(f"  WARNING: {model_name} not in model_registry.json! "
+              f"Runtime detection says thinking={detected}. "
+              f"Please add this model to the registry.")
+        return detected
+
+    teacher_has_thinking = _model_has_thinking(args.teacher_model, teacher_tokenizer)
+    student_has_thinking = _model_has_thinking(args.student_model, tokenizer)
+    print(f"  Thinking mode: student={student_has_thinking}, teacher={teacher_has_thinking}, "
+          f"enable_thinking={args.enable_thinking}")
+
+    # Build nothink_ids: suppress thinking UNLESS --enable_thinking is set
     _nothink_str = "<think>\n\n</think>\n\n"
-    # nothink_ids for teacher scoring (teacher tokenizer)
-    _test_ids_teacher = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
-    nothink_ids_teacher = _test_ids_teacher if len(_test_ids_teacher) <= 6 else []
-    # nothink_ids for student input (student tokenizer) — may differ in cross-tokenizer setups
-    _test_ids_student = tokenizer.encode(_nothink_str, add_special_tokens=False)
-    nothink_ids = _test_ids_student if len(_test_ids_student) <= 6 else []
-    if nothink_ids != nothink_ids_teacher:
-        print(f"  Cross-tokenizer nothink: student={nothink_ids}, teacher={nothink_ids_teacher}")
+    if args.enable_thinking:
+        # Thinking enabled — no nothink prefix needed
+        nothink_ids_teacher = []
+        nothink_ids = []
+        print(f"  CoT mode: thinking enabled, no nothink prefix")
+    else:
+        if teacher_has_thinking:
+            nothink_ids_teacher = teacher_tokenizer.encode(_nothink_str, add_special_tokens=False)
+        else:
+            nothink_ids_teacher = []
+        if student_has_thinking:
+            nothink_ids = tokenizer.encode(_nothink_str, add_special_tokens=False)
+        else:
+            nothink_ids = []
+        if nothink_ids or nothink_ids_teacher:
+            print(f"  Nothink IDs: student={nothink_ids}, teacher={nothink_ids_teacher}")
 
     # Build cross-tokenizer vocab mapping if student and teacher use different tokenizers
     vocab_mapping = None
@@ -1179,6 +1223,7 @@ def main():
                 args.n_samples, args.max_new_tokens, args.temperature,
                 gen_batch_size=args.gen_batch_size,
                 system_prompt=args.system_prompt,
+                enable_thinking=args.enable_thinking,
             )
 
         gen_time = time.time() - gen_start
@@ -1203,6 +1248,13 @@ def main():
         # Single-GPU: swap student out (if on GPU), load teacher in
         if single_gpu:
             student.to("cpu")  # no-op if already on CPU (sglang/vllm paths)
+            # Also offload optimizer states to CPU to free GPU memory
+            # (Adam momentum/variance buffers can be ~2x model size)
+            if args.full_finetune:
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor) and v.is_cuda:
+                            state[k] = v.cpu()
             gc.collect()
             torch.cuda.empty_cache()
             teacher_model.to(teacher_device)
@@ -1251,6 +1303,12 @@ def main():
             gc.collect()
             torch.cuda.empty_cache()
             student.to(student_device)
+            # Reload optimizer states back to GPU (offloaded in Phase 2)
+            if args.full_finetune:
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor) and not v.is_cuda:
+                            state[k] = v.to(student_device)
 
         train_start = time.time()
         optimizer.zero_grad()
@@ -1417,6 +1475,48 @@ def main():
                             rlen = mb_resp_lens[i]
                             k = max(1, int(rlen * args.reopold_beta))  # dynamic: beta% of response length
                             topk_idx = torch.topk(ent_per_pos[i, :rlen], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "ent_and":
+                    # AND: product of teacher*student entropy — both must be high
+                    with torch.no_grad():
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        ent_s = -(ps * s_log_probs_resp.detach()).sum(dim=-1)
+                        pt = torch.exp(t_log_probs_padded)
+                        ent_t = -(pt * t_log_probs_padded).sum(dim=-1)
+                        score = ent_s * ent_t  # product → high only when BOTH are high
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(score[i, :mb_resp_lens[i]], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "ent_or":
+                    # OR: sum of teacher+student entropy — either high is enough
+                    with torch.no_grad():
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        ent_s = -(ps * s_log_probs_resp.detach()).sum(dim=-1)
+                        pt = torch.exp(t_log_probs_padded)
+                        ent_t = -(pt * t_log_probs_padded).sum(dim=-1)
+                        score = ent_s + ent_t  # sum → high when EITHER is high
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(score[i, :mb_resp_lens[i]], k=k, largest=True).indices
+                            sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "ent_kl_and":
+                    # High entropy AND high KL — tokens where both uncertainty and divergence are large
+                    with torch.no_grad():
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        ent_s = -(ps * s_log_probs_resp.detach()).sum(dim=-1)
+                        pt = torch.exp(t_log_probs_padded)
+                        ent_t = -(pt * t_log_probs_padded).sum(dim=-1)
+                        kl_per_pos = (ps * (s_log_probs_resp.detach() - t_log_probs_padded)).sum(dim=-1)
+                        # Normalize each signal to [0,1] range before combining
+                        ent_combined = ent_s * ent_t
+                        score = ent_combined * kl_per_pos.clamp(min=0)  # triple product
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            topk_idx = torch.topk(score[i, :mb_resp_lens[i]], k=k, largest=True).indices
                             sel_mask[i].scatter_(0, topk_idx, True)
                 else:
                     raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
