@@ -90,8 +90,8 @@ The resolution: high-KL tokens are dominated by LaTeX formatting disagreements (
 The teacher's confusion about format is not useful supervision.
 
 \textbf{Solution: positional distillation.}
-We propose computing loss only on the first $N$ response tokens: $\texttt{loss\_mask[:, N:] = 0}$.
-This one-line change yields 12--24$\times$ speedup and 4$\times$ memory reduction while matching or exceeding full-sequence performance across 3 model families, 3 tasks, and 2 training methods.
+We propose \emph{positional distillation}: computing loss only on the first $N$ response tokens and clamping generation accordingly.
+This yields a 12$\times$ wall-clock speedup (by generating $N$ tokens instead of $T \gg N$) and 1.9$\times$ memory reduction, while matching or exceeding full-sequence performance across 3 model families, 3 tasks, and 2 training methods.
 A \emph{cascade effect} propagates early-token improvements to untrained positions, reducing KL by 35--38\% beyond the trained range.
 
 Our contributions are:
@@ -276,7 +276,7 @@ Middle-100 (47.8\%) and Last-100 (50.4\%) perform \emph{below the undistilled ba
 \textbf{Resolution.}
 The paradox resolves through the token classification (Section~\ref{sec:token_class}).
 High-KL tokens are dominated by LaTeX formatting disagreements where the teacher is \emph{confused by} the student's formatting choices, not \emph{superior to} the student's reasoning.
-KL decomposes approximately as $\text{KL} \approx H_{\text{teacher}} - H_{\text{student}}$: high KL reflects high teacher uncertainty about the student's tokens, not teacher superiority.
+Direct measurement confirms this: top-KL tokens have teacher entropy of 0.449 nats---nearly double the 0.235 of prefix tokens---indicating the teacher is \emph{uncertain}, not \emph{superior}, at these positions.
 Training on these tokens teaches superficial format preferences, not mathematical reasoning.
 
 The prefix succeeds for a different reason: the \emph{cascade effect}.
