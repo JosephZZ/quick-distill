@@ -17,17 +17,24 @@
 <div style="display: flex; gap: 2rem; align-items: flex-start;">
 <div style="width: 50%;">
 
-**Teacher's OUTPUT is wrong:**
-- Qwen3-1.7B outputs **natural language** math solutions, not JSON
-- Gemma-3-4B outputs **tool_code** format, not JSON
+**Teacher's OUTPUT is wrong format:**
+- Qwen3-1.7B outputs **natural language**, not JSON
+- Gemma-3-4B outputs **tool_code** format
+
+**But teacher KNOWS the right function:**
+- 50% of responses **mention correct function name** in natural language
+- 20% even use **correct call syntax** (just not JSON)
 
 </div>
 <div style="width: 50%;">
 
-**Teacher's DISTRIBUTION is right:**
-- Early-position probabilities encode *which function to call*
-- Student extracts this signal, outputs in its own (correct) JSON format
-- **Distributional knowledge > generation ability**
+**How distillation extracts this:**
+1. Student generates `[{"name": "` (its own format)
+2. Teacher's distribution at this point has high P(correct function name) — because teacher knows the right function
+3. Student learns **which function to call** from teacher's distribution
+4. Student outputs in **its own correct JSON format**
+
+**Result: distributional knowledge > generation ability**
 
 </div>
 </div>
