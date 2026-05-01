@@ -88,17 +88,23 @@ Analysis of token-position-wise KL divergence between teacher (Qwen3-1.7B) and s
 
 ## KL Signal vs Distillation Performance
 
-Cross-reference with actual distillation experiment results (baseline avg@4 = 50.95%):
+Cross-reference with actual distillation experiment results (n1bs16 LoRA, baseline avg@4 = 50.95%, full-seq = 62.35%):
 
-| Pos Limit | % of KL signal | Best avg@4 | Delta vs baseline | % of max gain captured |
-|-----------|----------------|------------|-------------------|------------------------|
-| 5 | 5.2% | 56.50% (+5.55) | | 35% |
-| 10 | 7.8% | 59.50% (+8.55) | | 54% |
-| 20 | 12.2% | 60.20% (+9.25) | | 58% |
-| 50 | 26.2% | 62.45% (+11.50) | | 73% |
-| 200 | 66.1% | 66.75% (+15.80) | | 100% |
+| Pos Limit | % of KL signal | Best avg@4 (n1bs16) | Δ vs baseline | Δ vs full-seq |
+|-----------|----------------|---------------------|---------------|---------------|
+| 50        | 26.2%          | **66.65%**          | +15.70        | +4.30 |
+| 100       | 43.9%          | 65.85%              | +14.90        | +3.50 |
+| 150       | ~55% (interp.) | **66.65%**          | +15.70        | +4.30 |
+| 200tok    | 66.1%          | 66.05%              | +15.10        | +3.70 |
+| full-seq  | 100%           | 62.35%              | +11.40        | 0 |
 
-**Key insight:** First 50 tokens contain only 26% of total KL signal but capture 73% of achievable performance gain.
+**Key insight:** Pos-50 captures only 26% of total KL signal but achieves the
+best avg@4 — beating full-sequence (which sees 100% of the KL) by +4.30pp.
+Adding more positions does not help; covering more KL mass is not what drives
+the gain.
+
+(Pos-5/10/20 numbers were collected only in the legacy n16bs16 setting and
+are not directly comparable — see `docs/archive/n16bs16_legacy_results.md`.)
 
 ## Distilled vs Raw Model KL Comparison
 

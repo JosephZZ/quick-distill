@@ -2,7 +2,6 @@
 
 ## Critical Rules
 - **NEVER kill GPU processes without explicitly confirming with the user first.** This is the most important rule.
-- **GPU 1 only** for all experiments. Never touch GPU 0.
 - Use only 1 GPU for eval unless user says otherwise.
 
 ## Design Principles
@@ -22,37 +21,73 @@ On-policy distillation: student (Qwen2.5-Math-1.5B) generates responses, teacher
 
 ## Repository Structure
 
+> **First read for any new collaborator: `README.md` (static map) and `STATUS.md` (live state).**
+> The deck `deck/slides.md` is the canonical narrative.
+
 ### Core Files (root)
 - `on_policy_distill_positional.py` — Main training script (HF generate, positional loss, progressive mode, auto-clamp)
 - `eval_math500.py` — MATH-500 evaluation (pass@k, avg@k, maj@k via vLLM)
+- `eval_funcall.py` — BFCL function-calling evaluation
 - `vllm_generate.py` — vLLM generation subprocess (used by eval, and optionally by training with `--use_vllm`)
+- `model_registry.json` — registered model paths
 
-### Eval Scripts (`scripts/`)
-- `eval_humaneval.py` — HumanEval/MBPP code evaluation (vLLM generation + evalplus scoring)
-
-### Analysis Scripts (`scripts/`)
-- `kl_analysis_v3.py` — Per-token KL position analysis (vLLM gen + HF scoring)
-- `kl_after200_analysis.py` — KL comparison by position range (HF generation)
-- `kl_after200_analysis_v2.py` — Same but with vLLM generation
-- `fullseq_degradation_analysis.py` — Full-seq \boxed{} repetition analysis
-- `analyze_generation_behavior.py` — Generation behavior patterns
-- `token_classification_analysis.py` — Token content classification
+### Scripts (`scripts/`, post-2026-04-28 reorg)
+- `scripts/training/` — active training launchers (UCLACG)
+- `scripts/eval/` — math/format-mask eval drivers, batch merge, parallel eval
+- `scripts/monitoring/` — watchdogs, status reporters, watch_*.sh
+- `scripts/analysis/` — offline analyses of generated logprobs / KL profiles
+  - `kl_analysis_v3.py` — Per-token KL position analysis (vLLM gen + HF scoring)
+  - `kl_x_entropy_buckets.py` — Position × entropy quartile cross-tab (Sale #2 evidence)
+  - `position_x_bucket.py` — Position-vs-bucket distribution
+  - `format_mask_threshold.py` — format/style token thresholding
+  - `strategy_kl_coverage.py` — cumulative KL coverage by selection strategy
+  - `kl_after200_analysis{,_v2}.py` — KL comparison by position range
+  - `fullseq_degradation_analysis.py` — Full-seq `\boxed{}` repetition pattern
+  - `analyze_generation_behavior.py` — Generation behavior patterns
+  - `token_classification_analysis.py` — Token content classification
+- `scripts/eval_humaneval.py` — HumanEval/MBPP code evaluation
+- `scripts/compute_metrics.py`, `scripts/prepare_funcall_data.py`, `scripts/hf_models_env.sh`
 
 ### Results & Docs (`docs/`)
-- `main_results.md` — Main results: Math (n1bs16) + Coding (n1), pos vs fullseq, LoRA vs FullFT
-- `batch_config_comparison.md` — Batch config comparison: n1bs1 vs n1bs16 vs n16bs16
-- `kl_position_analysis.md` — KL position distribution and cumulative analysis
+- `main_results.md` — **Canonical n1bs16 results** (math + coding), pos vs fullseq, LoRA vs FullFT
+- `kl_position_analysis.md` — KL position distribution and cumulative analysis (n1bs16 numbers)
 - `token_classification_analysis.md` — Token classification at high-KL positions
-- `fullseq_degradation_analysis.md` — Full-seq boxed repetition analysis
 - `generation_behavior_analysis.md` — Cascade effect analysis
-- `kl_position_analysis_v3/` — KL analysis plots and data
-- `archive/` — Superseded reports (positional_distillation_results.md, coding_distillation_results.md, etc.)
+- `archive/n16bs16_legacy_results.md` — **Legacy n16bs16/n1bs1 numbers, do NOT quote in paper**
+- `archive/fullseq_degradation_n16bs16_only.md` — Legacy fullseq `\boxed{}` repetition analysis (n16bs16 only — n1bs16 fullseq does not exhibit this)
+- `prefix_continuation_analysis.md` — Test-time prefix swap (handoff effects)
+- `funcall_results.md`, `format_mask_results.md` — task-specific results
+- `paper_outline_v6.md` — outline matching `paper/main_v2.tex`
+- `conceptual_framework_review.md` — review of the position-as-causal-proxy framing
+- `suffix_experiment_plan.md` — pending suffix experiments
+- `kl_position_analysis_v3/`, `signal_analysis/` — supporting raw data
+- `archive/` — superseded outlines, missing-experiments lists, v2 KL analysis
+
+### Archive (`archive/`)
+- `paper_v1/` — previous `main.tex` + build artifacts
+- `figures_legacy/` — exploration figures not used in `main_v2.tex`
+- `scripts_legacy/` — old runners (config A/C, sglang, fullseq queues, top-token harness)
+- `docs_legacy/` — placeholder
+
+### Paper (`paper/`)
+- `main_v2.tex`, `main_v2.pdf` — active submission
+- `references.bib`, `references_extended.bib` — bibs
+- `neurips_2026.sty` — style file
+- `REVISION_LOG.md` — rubric scoring rounds
+- `figures/` — only the 5 figures used in `main_v2.tex` (legacy moved to `archive/figures_legacy/`)
+
+### Deck (`deck/`)
+- `slides.md` — active 16-slide v2 deck (evidence-first ordering)
+- `slides_v1_backup.md` — previous ordering, kept for reference
+- `pages/*.md` — per-slide fragments
+- `public/images/` — deck-only image copies of the 5 paper figures
 
 ### Directories
 - `checkpoints/` — Training checkpoints (`<experiment>/step_{50,100,...,400}/`)
 - `logs/` — Training and eval logs, organized by `task_student_teacher_setting/`
-  - **Math LoRA**: `math_qwen2.5-1.5B_qwen3-1.7B_pos_lora_{n16bs16,n1bs1,n1bs16}/`
-  - **Math LoRA fullseq**: `math_qwen2.5-1.5B_qwen3-1.7B_fullseq_lora_n16bs16/`
+  - **Math LoRA (canonical)**: `math_qwen2.5-1.5B_qwen3-1.7B_pos_lora_n1bs16/` ← USE THIS
+  - **Math LoRA fullseq (canonical)**: see `checkpoints/fullft-fullseq-n1/` and n1bs16 fullseq LoRA logs
+  - **Math LoRA legacy** (n16bs16, n1bs1) — kept on disk only; numbers archived in `docs/archive/n16bs16_legacy_results.md`. **Do NOT quote in paper without explicitly tagging the config.**
   - **Math FullFT**: `math_qwen2.5-1.5B_qwen3-1.7B_{pos_fullft,fullseq_fullft}/`
   - **Math early**: `math_qwen2.5-1.5B_qwen3-1.7B_reverse-kl-dft/`
   - **Math analysis**: `math_qwen2.5-1.5B_qwen3-1.7B_{kl-analysis,forgetting-eval}/`
@@ -79,7 +114,7 @@ Eval script. Takes `--model` (path to merged model or HF name). Uses vLLM intern
 
 ## Important Bugs & Gotchas
 - **unmerge_adapter**: After `merge_adapter()` + save, MUST call `unmerge_adapter()` or LoRA training breaks (all subsequent checkpoints become identical).
-- **Full-seq answer extraction**: Full-seq models repeat `\boxed{}` 58-88 times after step 50, corrupting last-boxed extraction. Use first-boxed extraction for accurate scoring. True accuracy is stable at ~65%, not the apparent 43%.
+- **Full-seq answer extraction (n16bs16 ONLY)**: In the legacy n16bs16 fullseq math run, models repeat `\boxed{}` 58-88 times after step 50. **Does NOT happen in n1bs16 math fullseq** (stable 61-62% across all steps). Coding/funcall fullseq do degrade in n1bs16, but via different failure modes. See `docs/archive/fullseq_degradation_n16bs16_only.md` for the legacy analysis.
 - **Eval merge on CPU**: When merging LoRA for eval, do it on CPU (`CUDA_VISIBLE_DEVICES=""`) to leave GPU memory free for vLLM.
 - **vLLM GPU memory**: After offloading models to CPU, PyTorch still reserves ~22GB. Use `gpu_memory_utilization=0.50` when models are loaded, `0.85` when GPU is free.
 
@@ -90,10 +125,17 @@ Eval script. Takes `--model` (path to merged model or HF name). Uses vLLM intern
 
 ## Training Configurations
 
-### LoRA (default)
+> **Canonical recipe (n1bs16) — use this unless explicitly noted.**
+> Older n16bs16 results exist on disk and are archived in
+> `docs/archive/n16bs16_legacy_results.md`. **Never quote n16bs16 numbers in
+> the paper, deck, or new analysis.** They use a different recipe (200
+> problems × 16 trajectories vs 3200 problems × 1 trajectory) and the
+> numbers are not directly comparable.
+
+### LoRA (default = n1bs16)
 - LoRA: r=32, alpha=64, targets: q/k/v/o/gate/up/down_proj
 - lr=5e-5, temperature=0.7, save every 50 steps, 200 steps total
-- 200 problems, n_samples=16 (or 1 for large-scale)
+- **3200 problems, n_samples=1, batch_size=16 (n1bs16)**
 
 ### Full Finetune
 - No LoRA (`--full_finetune`), lr=5e-6
@@ -112,30 +154,25 @@ Eval script. Takes `--model` (path to merged model or HF name). Uses vLLM intern
 
 ## Completed Experiments
 
-### Math (MATH-500)
-See `docs/positional_distillation_results.md` for full results.
+### Math (MATH-500) — n1bs16 LoRA (canonical, 3200 problems)
+See `docs/main_results.md` for full per-step tables. **All numbers below are n1bs16.**
 
 | Method | Best Step | avg@4 | maj@4 | pass@4 |
 |--------|-----------|-------|-------|--------|
-| No distill baseline | — | 50.95% | 61.2% | 72.8% |
-| Pos-5 | 150 | 56.50% | 64.8% | 76.0% |
-| Pos-10 | 50 | 59.50% | 66.4% | 75.8% |
-| Pos-20 | 50 | 60.20% | 67.6% | 77.0% |
-| Pos-50 | 50 | 62.45% | 68.8% | 77.0% |
-| Progressive 1→200 | 200 | 62.30% | 69.0% | 78.8% |
-| Pos-100 | 150 | 64.25% | 69.6% | 80.2% |
-| Pos-150 | 100 | 65.70% | 71.4% | 77.4% |
-| Full-seq (first-boxed) | 150 | 65.55% | — | — |
-| **Pos-200tok** | **100** | **66.75%** | **72.0%** | **80.2%** |
+| No distill baseline | — | 50.95% | 61.20% | 72.80% |
+| Top-KL-100 | 50 | 58.60% | 65.80% | 74.40% |
+| Top-Entropy-Student-100 | 100 | 61.35% | 67.20% | 73.20% |
+| format_mask (drop ~6% format toks) | 50 | 62.05% | 67.20% | 76.20% |
+| Top-Entropy-Teacher-100 | 150 | 62.20% | 67.80% | 75.80% |
+| **Full-seq (n1bs16)** | **150** | **62.35%** | **69.40%** | **74.60%** |
+| Random-100 | 150 | 63.05% | 69.20% | 76.80% |
+| Pos-100 | 200 | 65.85% | 70.80% | 79.80% |
+| Pos-200tok | 50 | 66.05% | 71.20% | 81.00% |
+| **Pos-50** | **150** | **66.65%** | **71.00%** | **81.00%** |
+| Pos-150 | 100 | 66.65% | 67.00% | 81.00% |
 
-#### n1bs16 LoRA (3200 problems)
-
-| Method | Best Step | avg@4 | maj@4 | pass@4 |
-|--------|-----------|-------|-------|--------|
-| Pos-50 | 150 | 66.65% | 71.0% | 81.0% |
-| Pos-100 | 200 | 65.85% | 70.8% | 79.8% |
-| Pos-150 | 100 | 66.65% | 67.0% | 81.0% |
-| Pos-200tok | 50 | 66.05% | 71.2% | 81.0% |
+(Pos-5/10/20 and pos-200tok = 66.75% are **n16bs16-only** — see
+`docs/archive/n16bs16_legacy_results.md`. Do not quote without tagging.)
 
 ### Coding (HumanEval/MBPP)
 See `docs/coding_distillation_results.md` for full results.

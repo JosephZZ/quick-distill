@@ -1,68 +1,72 @@
 ---
 theme: default
-title: "Where Teachers Teach"
+title: "Where Teachers Teach — v5"
 drawings:
   persist: false
 transition: slide-left
 mdc: true
 ---
 
-# Where Teachers Teach
-
-### The Positional Structure of Distillation Signal
-
-<br>
-
-NeurIPS 2026
-
 ---
-src: ./pages/01_problem.md
+src: ./pages/v5_00_title.md
 ---
 
 ---
-src: ./pages/02_core_observation.md
+src: ./pages/v5_01_setup.md
 ---
 
 ---
-src: ./pages/03_three_evidence.md
+src: ./pages/v5_02_part1_header.md
 ---
 
 ---
-src: ./pages/09_paradox.md
+src: ./pages/v5_03_kl_paradox.md
 ---
 
 ---
-src: ./pages/10_resolution.md
+src: ./pages/v5_04_entropy.md
 ---
 
 ---
-src: ./pages/04_cross_model.md
+src: ./pages/v5_05_position_wins.md
 ---
 
 ---
-src: ./pages/05_method.md
+src: ./pages/v5_06_part2_header.md
 ---
 
 ---
-src: ./pages/06_math_results.md
+src: ./pages/v5_07_main_results.md
 ---
 
 ---
-src: ./pages/07_funcall_results.md
+src: ./pages/v5_08_generality.md
 ---
 
 ---
-src: ./pages/08_stability.md
+src: ./pages/v5_09_n_elbow.md
 ---
 
 ---
-src: ./pages/11_ablations.md
+src: ./pages/v5_10_part3_header.md
 ---
 
 ---
-src: ./pages/12_cascade.md
+src: ./pages/v5_11_cascade.md
 ---
 
 ---
-src: ./pages/13_summary.md
+src: ./pages/v5_12_surpass_teacher.md
+---
+
+---
+src: ./pages/v5_13_concurrent.md
+---
+
+---
+src: ./pages/v5_14_limitations.md
+---
+
+---
+src: ./pages/v5_15_summary.md
 ---

@@ -10,6 +10,7 @@ import argparse
 import gc
 import os
 import random
+import re
 import shutil
 import subprocess
 import sys
@@ -23,6 +24,87 @@ from peft import LoraConfig, get_peft_model, PeftModel, TaskType
 from datasets import load_dataset
 from tqdm import tqdm
 import wandb
+
+
+# --- Format-token classification (used by token_select_mode="format_mask") ---
+# A token is "format" if its decoded string is structural punctuation, a
+# LaTeX command, a math operator, or a pure number. Reasoning words
+# ("planning") and English continuation words are NOT format and remain in
+# the loss. Classification is keyed on the **student-emitted** token, so this
+# is the same definition used in scripts/analysis/format_mask_threshold.py.
+
+_PLANNING_WORDS = {
+    "to","let","we","first","the","since","note","recall","now","next","then",
+    "so","thus","hence","therefore","given","consider","suppose","assume",
+    "because","if","for","by","from","using","applying","substituting",
+    "simplifying","solving","calculating","computing","evaluating","finally",
+    "step","answer","solution",
+}
+_MATH_OPS = {"+","-","*","/","=","<",">","^","_","≤","≥","≠","±","×","÷"}
+_LATEX_HINTS = ("frac","sqrt","sum","int","lim","boxed","text","cdot","times")
+_STRUCTURAL_LITERALS = {"**","##","#","---","```",":",";",",",".","!","?","(",")","[","]","{","}"}
+_NUMBER_RE = re.compile(r'^-?\d+\.?\d*$')
+
+
+def _classify_token_str(s: str) -> str:
+    st = s.strip()
+    if st.lower() in _PLANNING_WORDS:
+        return "planning"
+    if s in ("\n","\r\n","\r") or st == "":
+        return "structural"
+    if st in _STRUCTURAL_LITERALS:
+        return "structural"
+    if st.startswith("**") or st.startswith("##"):
+        return "structural"
+    if st.startswith("\\") and len(st) > 1:
+        return "math_latex"
+    if st in _MATH_OPS:
+        return "math_operator"
+    if st.replace(".","").replace(",","").isdigit():
+        return "math_number"
+    if any(x in st for x in _LATEX_HINTS):
+        return "math_latex"
+    if _NUMBER_RE.match(st):
+        return "math_number"
+    if len(st) <= 2 and not st.isalnum():
+        return "structural"
+    return "continuation"
+
+
+# Categories considered "format" for the format_mask ablation.
+# Recommendation from scripts/analysis/format_mask_threshold.py:
+# {structural, math_latex, math_operator, math_number} -> 58.6% of tokens,
+# 42.2% of total KL removed. Leaves planning + continuation (word-level
+# reasoning content) for distillation.
+_FORMAT_CATS = {"structural", "math_latex", "math_operator", "math_number"}
+
+
+def build_format_token_mask(tokenizer, cats=None):
+    """Return a BoolTensor of shape [vocab_size]: True iff token id is in 'format' cats.
+
+    cats: iterable of category names treated as 'format' (masked out of loss).
+          Default = _FORMAT_CATS (structural+math_latex+math_operator+math_number).
+    """
+    if cats is None:
+        cats = _FORMAT_CATS
+    cats = set(cats)
+    vocab_size = len(tokenizer)
+    mask = torch.zeros(vocab_size, dtype=torch.bool)
+    n_fmt = 0
+    cat_counts = {"planning":0,"structural":0,"math_latex":0,"math_operator":0,"math_number":0,"continuation":0}
+    for tid in range(vocab_size):
+        try:
+            s = tokenizer.decode([tid])
+        except Exception:
+            continue
+        c = _classify_token_str(s)
+        cat_counts[c] = cat_counts.get(c, 0) + 1
+        if c in cats:
+            mask[tid] = True
+            n_fmt += 1
+    print(f"[format_mask] cats={sorted(cats)}; format={n_fmt}/{vocab_size} ({n_fmt/vocab_size*100:.1f}%)")
+    print(f"[format_mask] Per-category counts: {cat_counts}")
+    return mask
 
 
 def _supports_thinking(tokenizer):
@@ -841,11 +923,43 @@ def main():
         type=str,
         default="prefix",
         choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random",
-                 "middle", "last", "reopold", "ent_and", "ent_or", "ent_kl_and"],
+                 "middle", "last", "reopold", "ent_and", "ent_or", "ent_kl_and", "format_mask",
+                 "hi_kl_hi_surp", "hi_kl_hi_surp_topk", "hi_kl_hi_ent_topk", "hi_surp", "hi_ent"],
         help="Token selection: prefix, top_kl, top_entropy_student/teacher, random, middle, last, "
              "reopold, ent_and (teacher*student entropy product), ent_or (teacher+student entropy sum), "
-             "ent_kl_and (high entropy AND high KL)",
+             "ent_kl_and (high entropy AND high KL), "
+             "format_mask (full-seq with student-emitted format tokens masked out), "
+             "hi_kl_hi_surp (full-seq, keep only positions where per-batch KL > p75 AND -s_lp > p75), "
+             "hi_kl_hi_surp_topk (per-trajectory top-K by joint score = KL * surprise; K = position_limit), "
+             "hi_kl_hi_ent_topk (per-trajectory top-K by joint score = KL * full-vocab entropy; "
+             "K = position_limit, or floor(response_len * top_k_frac) if top_k_frac > 0), "
+             "hi_surp (drop low-surprise positions: keep where -s_lp > hi_surp_quantile p; "
+             "if position_limit>0, restrict the rule to first N positions, else full-seq), "
+             "hi_ent (same shape as hi_surp but uses full-vocab entropy "
+             "H(p)=-sum p log p instead of -log p_sampled; threshold = hi_ent_quantile)",
     )
+    parser.add_argument("--format_mask_cats", type=str, default=None,
+                       help="format_mask: comma-separated category names to treat as 'format' "
+                            "(masked out of loss). Choices: structural,math_latex,math_operator,"
+                            "math_number,planning,continuation. Default = "
+                            "'structural,math_latex,math_operator,math_number'. "
+                            "E.g. --format_mask_cats=structural,math_latex masks only those two.")
+    parser.add_argument("--hi_kl_quantile", type=float, default=0.75,
+                       help="hi_kl_hi_surp: quantile threshold on per-position KL (default 0.75)")
+    parser.add_argument("--hi_surp_quantile", type=float, default=0.75,
+                       help="hi_kl_hi_surp / hi_surp: quantile threshold on per-position surprise (default 0.75)")
+    parser.add_argument("--hi_ent_quantile", type=float, default=0.25,
+                       help="hi_ent: drop positions where full-vocab entropy H(p) <= this quantile "
+                            "of valid positions in the active region (default 0.25 = drop bottom 25%%, "
+                            "chosen from prefix-100 H distribution analysis: p25=0.031 ≈ deterministic "
+                            "format/structural tokens). Ignored if --hi_ent_threshold > 0.")
+    parser.add_argument("--hi_ent_threshold", type=float, default=0.0,
+                       help="hi_ent: absolute H threshold (drop positions where H(p) <= threshold). "
+                            "If > 0, takes precedence over --hi_ent_quantile. "
+                            "Reference: H=0.01 -> top-1 prob ≈ 99%% (deterministic format/structural).")
+    parser.add_argument("--top_k_frac", type=float, default=0.0,
+                       help="hi_kl_hi_*_topk: if >0, K per trajectory = floor(response_len * top_k_frac); "
+                            "else K = position_limit (default 0.0 = use position_limit)")
     parser.add_argument("--reopold_beta", type=float, default=0.2,
                        help="REOPOLD: fraction of highest-entropy tokens to keep (default 0.2 = top 20%%)")
     parser.add_argument("--reward_clip", type=float, default=0.0,
@@ -885,10 +999,15 @@ def main():
     single_gpu = args.single_gpu or (args.student_gpu == args.teacher_gpu == args.vllm_gpu)
     if single_gpu:
         print("Single-GPU mode: models will take turns on the GPU")
-    _fullseq_modes = ("prefix", "reopold", "ent_and", "ent_or", "ent_kl_and")
+    _fullseq_modes = ("prefix", "reopold", "ent_and", "ent_or", "ent_kl_and", "format_mask",
+                      "hi_kl_hi_surp", "hi_surp", "hi_ent")
     if args.token_select_mode not in _fullseq_modes and args.position_limit <= 0:
-        raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
-    if args.token_select_mode in ("reopold", "ent_and", "ent_or", "ent_kl_and") and args.position_limit <= 0:
+        if args.token_select_mode == "hi_kl_hi_ent_topk" and args.top_k_frac > 0.0:
+            pass  # fraction-based K is valid
+        else:
+            raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
+    if args.token_select_mode in ("reopold", "ent_and", "ent_or", "ent_kl_and", "format_mask",
+                                  "hi_kl_hi_surp") and args.position_limit <= 0:
         args.position_limit = 0  # these modes use dynamic selection, not fixed K
 
     # Compute n_problems per step from bs and n_samples
@@ -930,6 +1049,15 @@ def main():
 
     tokenizer = AutoTokenizer.from_pretrained(args.student_model, trust_remote_code=True)
     teacher_tokenizer = AutoTokenizer.from_pretrained(args.teacher_model, trust_remote_code=True)
+
+    # Precompute the per-vocab format-token boolean mask for format_mask mode.
+    # Built once at startup; moved to student_device when needed.
+    is_format_token_id = None
+    if args.token_select_mode == "format_mask":
+        _cats = None
+        if getattr(args, "format_mask_cats", None):
+            _cats = [c.strip() for c in args.format_mask_cats.split(",") if c.strip()]
+        is_format_token_id = build_format_token_mask(tokenizer, cats=_cats)
 
     # --- Thinking mode detection via model_registry.json ---
     _registry_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "model_registry.json")
@@ -1184,10 +1312,20 @@ def main():
                 student.to("cpu")
             if offload_teacher:
                 teacher_model.to("cpu")
-            if offload_student or offload_teacher:
-                gc.collect()
-                torch.cuda.empty_cache()
-                torch.cuda.ipc_collect()
+            # Single-GPU: also offload optimizer state to CPU so vLLM has room
+            # for KV cache. Critical for chunk_idx > 0 where Adam states + cached
+            # backward buffers occupy 20+ GB even after model.to(cpu).
+            if single_gpu:
+                for state in optimizer.state.values():
+                    for k, v in state.items():
+                        if isinstance(v, torch.Tensor) and v.is_cuda:
+                            state[k] = v.cpu()
+            if offload_student or offload_teacher or single_gpu:
+                for _ in range(3):
+                    gc.collect()
+                    torch.cuda.synchronize()
+                    torch.cuda.empty_cache()
+                    torch.cuda.ipc_collect()
 
             # 3. Run vLLM subprocess on vllm_gpu
             traj_output = os.path.join(args.output_dir, "_vllm_trajs.json")
@@ -1208,7 +1346,9 @@ def main():
                     student.to(student_device)
                 if offload_teacher:
                     teacher_model.to(teacher_device)
-            # single_gpu: both stay on CPU; teacher loaded for scoring, student for training
+            # single_gpu: both stay on CPU; teacher loaded for scoring, student
+            # for training. Optimizer state also stays on CPU and is reloaded
+            # along with student before training (Phase 3, line ~1390).
 
             # 5. Cleanup
             if os.path.exists(merged_gen_path):
@@ -1280,7 +1420,14 @@ def main():
                     nothink_ids_teacher, current_pos_limit, device=teacher_device,
                 )
             else:
-                query_pos_limit = current_pos_limit if args.token_select_mode == "prefix" else 0
+                # For prefix and prefix-bounded hi_surp/hi_ent (position_limit>0),
+                # only score the active prefix region (saves teacher compute).
+                if args.token_select_mode == "prefix":
+                    query_pos_limit = current_pos_limit
+                elif args.token_select_mode in ("hi_surp", "hi_ent") and args.position_limit > 0:
+                    query_pos_limit = current_pos_limit
+                else:
+                    query_pos_limit = 0
                 teacher_lps = query_teacher_hf_logits_batch(
                     teacher_model, trajs, nothink_ids_teacher, query_pos_limit, device=teacher_device,
                     micro_bs=args.teacher_micro_bs,
@@ -1303,12 +1450,12 @@ def main():
             gc.collect()
             torch.cuda.empty_cache()
             student.to(student_device)
-            # Reload optimizer states back to GPU (offloaded in Phase 2)
-            if args.full_finetune:
-                for state in optimizer.state.values():
-                    for k, v in state.items():
-                        if isinstance(v, torch.Tensor) and not v.is_cuda:
-                            state[k] = v.to(student_device)
+            # Reload optimizer states back to GPU (offloaded in Phase 1 vLLM
+            # block or Phase 2). Done unconditionally so LoRA mode also works.
+            for state in optimizer.state.values():
+                for k, v in state.items():
+                    if isinstance(v, torch.Tensor) and not v.is_cuda:
+                        state[k] = v.to(student_device)
 
         train_start = time.time()
         optimizer.zero_grad()
@@ -1518,6 +1665,237 @@ def main():
                             k = mb_distill_counts[i]
                             topk_idx = torch.topk(score[i, :mb_resp_lens[i]], k=k, largest=True).indices
                             sel_mask[i].scatter_(0, topk_idx, True)
+                elif args.token_select_mode == "format_mask":
+                    # Full-seq supervision but mask out positions where the
+                    # student emitted a "format" token (structural / latex /
+                    # math_operator / math_number — see _FORMAT_CATS). Mask is
+                    # keyed on student emission, matching the offline analysis
+                    # in scripts/analysis/format_mask_threshold.py.
+                    _is_fmt_dev = is_format_token_id.to(student_device, non_blocking=True)
+                    # labels_resp[i, t] is the student-emitted token id at
+                    # response position t (already padded with 0 beyond rlen).
+                    fmt_at_pos = _is_fmt_dev[labels_resp]  # [mb_size, max_resp_len], bool
+                    # keep = valid response position AND not a format token
+                    sel_mask = resp_valid_mask & (~fmt_at_pos)
+                    # Diagnostic counts (printed once early in training)
+                    if step <= 1 and mb_start == 0:
+                        n_valid = int(resp_valid_mask.sum().item())
+                        n_kept  = int(sel_mask.sum().item())
+                        n_fmt   = int((resp_valid_mask & fmt_at_pos).sum().item())
+                        print(f"[format_mask] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} kept={n_kept} masked_format={n_fmt} "
+                              f"({n_fmt/max(n_valid,1)*100:.1f}% of valid)")
+                elif args.token_select_mode == "hi_kl_hi_surp":
+                    # Principled selection: keep only positions where the
+                    # student is genuinely uncertain (-s_lp > p75) AND the
+                    # teacher disagrees with the sampled token (|s_lp - t_lp|
+                    # > p75). Tests the hypothesis that prefix-100 wins
+                    # because position 0-100 over-concentrates this bucket
+                    # (see docs/position_x_bucket.md and
+                    # docs/kl_x_entropy_buckets.md).
+                    #
+                    # Thresholds are per-batch quantiles (over valid response
+                    # positions) so the rule auto-adapts as the student
+                    # distribution shifts during training.
+                    with torch.no_grad():
+                        # s_lp / t_lp at sampled tokens
+                        s_lp_at = s_log_probs_resp.gather(
+                            -1, labels_resp.unsqueeze(-1)
+                        ).squeeze(-1)  # [mb, T]
+                        t_lp_at = t_log_probs_padded.gather(
+                            -1, labels_resp.clamp(max=t_log_probs_padded.shape[-1]-1).unsqueeze(-1)
+                        ).squeeze(-1)
+                        t_lp_at = torch.nan_to_num(t_lp_at, nan=-20.0, posinf=0.0, neginf=-20.0)
+                        kl_pos   = (s_lp_at - t_lp_at).abs()
+                        surp_pos = -s_lp_at
+                        valid_kl   = kl_pos[resp_valid_mask]
+                        valid_surp = surp_pos[resp_valid_mask]
+                        if valid_kl.numel() > 0:
+                            kl_thr   = torch.quantile(valid_kl.float(),   args.hi_kl_quantile)
+                            surp_thr = torch.quantile(valid_surp.float(), args.hi_surp_quantile)
+                        else:
+                            kl_thr   = torch.tensor(float('inf'), device=student_device)
+                            surp_thr = torch.tensor(float('inf'), device=student_device)
+                    sel_mask = resp_valid_mask & (kl_pos > kl_thr) & (surp_pos > surp_thr)
+                    if step <= 1 and mb_start == 0:
+                        n_valid = int(resp_valid_mask.sum().item())
+                        n_kept  = int(sel_mask.sum().item())
+                        print(f"[hi_kl_hi_surp] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} kept={n_kept} "
+                              f"({n_kept/max(n_valid,1)*100:.1f}% of valid)  "
+                              f"kl_thr={kl_thr.item():.3f}  surp_thr={surp_thr.item():.3f}")
+                elif args.token_select_mode == "hi_kl_hi_surp_topk":
+                    # Budget-controlled hi_kl_hi_surp: per-trajectory top-K
+                    # positions ranked by joint score = KL * surprise. K is
+                    # taken from --position_limit so this slots directly into
+                    # the K=100 token-selection family (prefix-100, top-KL-100,
+                    # random-100, etc.) for an apples-to-apples comparison.
+                    # Joint score multiplicative form requires both factors
+                    # large; either alone being small pushes the score down.
+                    with torch.no_grad():
+                        s_lp_at = s_log_probs_resp.gather(
+                            -1, labels_resp.unsqueeze(-1)
+                        ).squeeze(-1)  # [mb, T]
+                        t_lp_at = t_log_probs_padded.gather(
+                            -1, labels_resp.clamp(max=t_log_probs_padded.shape[-1]-1).unsqueeze(-1)
+                        ).squeeze(-1)
+                        t_lp_at = torch.nan_to_num(t_lp_at, nan=-20.0, posinf=0.0, neginf=-20.0)
+                        kl_pos   = (s_lp_at - t_lp_at).abs()
+                        surp_pos = -s_lp_at
+                        # Joint score: both must be large. Clamp surprise
+                        # at >=0 (it's -log p so always >=0 for valid p<=1
+                        # but numerical noise can make it slightly <0).
+                        score = kl_pos * surp_pos.clamp(min=0.0)
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            k = mb_distill_counts[i]
+                            rlen = mb_resp_lens[i]
+                            if k > 0 and rlen > 0:
+                                k_eff = min(k, rlen)
+                                topk_idx = torch.topk(
+                                    score[i, :rlen], k=k_eff, largest=True
+                                ).indices
+                                sel_mask[i].scatter_(0, topk_idx, True)
+                    if step <= 1 and mb_start == 0:
+                        n_valid = int(resp_valid_mask.sum().item())
+                        n_kept  = int(sel_mask.sum().item())
+                        print(f"[hi_kl_hi_surp_topk] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} kept={n_kept} "
+                              f"({n_kept/max(n_valid,1)*100:.1f}% of valid)  "
+                              f"K_per_traj={mb_distill_counts}")
+                elif args.token_select_mode == "hi_kl_hi_ent_topk":
+                    # Per-trajectory top-K by joint score = KL * full-vocab entropy
+                    # of the student. Replaces surprise (-log p_sampled) with
+                    # H(p) = -sum_v p_v log p_v which is a vocab-wide measure
+                    # of the student's uncertainty at this position.
+                    # K is taken from --position_limit, OR if --top_k_frac > 0,
+                    # K_i = floor(response_len_i * top_k_frac) per trajectory
+                    # (e.g., top_k_frac=0.5 -> half the response length).
+                    with torch.no_grad():
+                        s_lp_at = s_log_probs_resp.gather(
+                            -1, labels_resp.unsqueeze(-1)
+                        ).squeeze(-1)  # [mb, T]
+                        t_lp_at = t_log_probs_padded.gather(
+                            -1, labels_resp.clamp(max=t_log_probs_padded.shape[-1]-1).unsqueeze(-1)
+                        ).squeeze(-1)
+                        t_lp_at = torch.nan_to_num(t_lp_at, nan=-20.0, posinf=0.0, neginf=-20.0)
+                        kl_pos = (s_lp_at - t_lp_at).abs()
+                        # Full-vocab entropy of student at each position
+                        s_lp_full = s_log_probs_resp.detach()
+                        ps = torch.exp(s_lp_full)
+                        ent_pos = -(ps * s_lp_full).sum(dim=-1)  # [mb, T]
+                        score = kl_pos * ent_pos.clamp(min=0.0)
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            rlen = mb_resp_lens[i]
+                            if args.top_k_frac > 0.0:
+                                k = int(rlen * args.top_k_frac)
+                            else:
+                                k = mb_distill_counts[i]
+                            if k > 0 and rlen > 0:
+                                k_eff = min(k, rlen)
+                                topk_idx = torch.topk(
+                                    score[i, :rlen], k=k_eff, largest=True
+                                ).indices
+                                sel_mask[i].scatter_(0, topk_idx, True)
+                    if step <= 1 and mb_start == 0:
+                        n_valid = int(resp_valid_mask.sum().item())
+                        n_kept  = int(sel_mask.sum().item())
+                        ks_used = [
+                            int(rl * args.top_k_frac) if args.top_k_frac > 0.0
+                            else int(mb_distill_counts[i])
+                            for i, rl in enumerate(mb_resp_lens)
+                        ]
+                        print(f"[hi_kl_hi_ent_topk] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} kept={n_kept} "
+                              f"({n_kept/max(n_valid,1)*100:.1f}% of valid)  "
+                              f"top_k_frac={args.top_k_frac}  K_per_traj={ks_used}")
+                elif args.token_select_mode == "hi_ent":
+                    # Drop low-entropy positions, where entropy is the full-vocab
+                    # H(p) = -sum_v p_v log p_v of the student. Vocab-wide measure
+                    # of uncertainty, independent of which token was sampled.
+                    # Threshold (per-batch quantile of H over valid positions
+                    # within the active region) chosen from prefix-100 H
+                    # distribution analysis (docs/entropy_distribution_prefix/):
+                    # - p25 ≈ 0.031: tokens where student is essentially
+                    #   deterministic (top-1 prob > 95%) — format/structural tail.
+                    # - p50 ≈ 0.44, p75 ≈ 1.28 (long right tail).
+                    # If position_limit > 0, restrict the rule to the first N
+                    # response positions; else full-seq.
+                    with torch.no_grad():
+                        s_lp_full = s_log_probs_resp.detach()
+                        ps = torch.exp(s_lp_full)
+                        ent_pos = -(ps * s_lp_full).sum(dim=-1)  # [mb, T]
+                        ent_pos = ent_pos.clamp(min=0.0)  # numerical safety
+                        if args.position_limit > 0:
+                            T = ent_pos.shape[1]
+                            pos_idx = torch.arange(T, device=ent_pos.device).unsqueeze(0)
+                            region_mask = resp_valid_mask & (pos_idx < args.position_limit)
+                        else:
+                            region_mask = resp_valid_mask
+                        valid_ent = ent_pos[region_mask]
+                        if args.hi_ent_threshold > 0.0:
+                            # absolute threshold mode: fixed H cutoff (e.g. 0.01 ≈ top-1 prob 99%)
+                            ent_thr = torch.tensor(
+                                float(args.hi_ent_threshold), device=student_device
+                            )
+                            thr_mode = "abs"
+                        elif valid_ent.numel() > 0:
+                            ent_thr = torch.quantile(
+                                valid_ent.float(), args.hi_ent_quantile
+                            )
+                            thr_mode = "q"
+                        else:
+                            ent_thr = torch.tensor(float('inf'), device=student_device)
+                            thr_mode = "inf"
+                    sel_mask = region_mask & (ent_pos > ent_thr)
+                    if step <= 1 and mb_start == 0:
+                        n_valid  = int(resp_valid_mask.sum().item())
+                        n_region = int(region_mask.sum().item())
+                        n_kept   = int(sel_mask.sum().item())
+                        print(f"[hi_ent] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} region={n_region} kept={n_kept} "
+                              f"({n_kept/max(n_region,1)*100:.1f}% of region)  "
+                              f"ent_thr={ent_thr.item():.5f} ({thr_mode})  "
+                              f"quantile={args.hi_ent_quantile} "
+                              f"abs={args.hi_ent_threshold}  "
+                              f"pos_limit={args.position_limit}")
+                elif args.token_select_mode == "hi_surp":
+                    # Drop low-surprise (low-entropy at sampled token) positions.
+                    # If position_limit > 0, restrict the rule to the first N
+                    # response positions (prefix-bounded variant); else full-seq.
+                    # Threshold = per-batch quantile of -s_lp over valid positions
+                    # within the active region. Keeps positions where
+                    # -s_lp > threshold.
+                    with torch.no_grad():
+                        s_lp_at = s_log_probs_resp.gather(
+                            -1, labels_resp.unsqueeze(-1)
+                        ).squeeze(-1)  # [mb, T]
+                        surp_pos = -s_lp_at  # [mb, T], surprise (>=0 typically)
+                        # Region mask: full-seq if position_limit==0, else prefix.
+                        if args.position_limit > 0:
+                            T = surp_pos.shape[1]
+                            pos_idx = torch.arange(T, device=surp_pos.device).unsqueeze(0)
+                            region_mask = resp_valid_mask & (pos_idx < args.position_limit)
+                        else:
+                            region_mask = resp_valid_mask
+                        valid_surp = surp_pos[region_mask]
+                        if valid_surp.numel() > 0:
+                            surp_thr = torch.quantile(
+                                valid_surp.float(), args.hi_surp_quantile
+                            )
+                        else:
+                            surp_thr = torch.tensor(float('inf'), device=student_device)
+                    sel_mask = region_mask & (surp_pos > surp_thr)
+                    if step <= 1 and mb_start == 0:
+                        n_valid  = int(resp_valid_mask.sum().item())
+                        n_region = int(region_mask.sum().item())
+                        n_kept   = int(sel_mask.sum().item())
+                        print(f"[hi_surp] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} region={n_region} kept={n_kept} "
+                              f"({n_kept/max(n_region,1)*100:.1f}% of region)  "
+                              f"surp_thr={surp_thr.item():.3f}  "
+                              f"pos_limit={args.position_limit}")
                 else:
                     raise ValueError(f"Unknown token_select_mode={args.token_select_mode}")
 
@@ -1586,6 +1964,12 @@ def main():
                     t_lp = t_log_probs_padded[..., :min_vocab]
                     s_lp = s_log_probs_resp[..., :min_vocab]
 
+                    # Sanitize teacher log-probs: padding positions (beyond
+                    # response length) are -inf, which produces NaN under
+                    # `0 * inf` when later masked. Clamp to a finite floor.
+                    t_lp = torch.nan_to_num(t_lp, nan=-20.0, posinf=0.0, neginf=-20.0)
+                    t_lp = t_lp.clamp(min=-20.0, max=0.0)
+
                     # Compute per-position KL: [mb_size, max_resp_len]
                     if args.loss_type == "reverse_kl":
                         per_pos_kl = (torch.exp(s_lp) * (s_lp - t_lp)).sum(dim=-1)
@@ -1603,8 +1987,10 @@ def main():
                     # Reward clipping (REOPOLD): cap extreme per-token KL values
                     if args.reward_clip > 0:
                         per_pos_kl = per_pos_kl.clamp(max=args.reward_clip)
-                    # Mask: only selected positions contribute
-                    per_pos_kl = per_pos_kl * sel_mask.float()
+                    # Mask: only selected positions contribute. Use `where`
+                    # rather than `*` so any inf/NaN at unmasked positions
+                    # cannot leak through `0 * inf = NaN`.
+                    per_pos_kl = torch.where(sel_mask, per_pos_kl, torch.zeros_like(per_pos_kl))
                     # Average over selected positions, then over batch
                     n_sel_per_traj = sel_mask.float().sum(dim=-1).clamp(min=1)
                     loss_per_traj = per_pos_kl.sum(dim=-1) / n_sel_per_traj

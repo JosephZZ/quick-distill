@@ -28,7 +28,7 @@ As $t$ grows, the teacher is increasingly **conditioned on the student's prefix*
 
 <img src="/images/fig1_kl_decay.png" style="max-width: 100%; max-height: 55vh; object-fit: contain; margin: 0;" />
 
-KL drops **4.4×**. Agreement rises from 75% to 89%.
+KL drops **4.9×** (2.09 → 0.43). Agreement rises **78.5% → 89.5%**.
 
 </div>
 </div>

@@ -1,3 +1,28 @@
+# LEGACY: full-seq degradation analysis — n16bs16 ONLY
+
+> **READ THIS FIRST.**
+>
+> The `\boxed{}` repetition collapse documented below (avg@4 dropping
+> 65.6 → 46.3 → 49.7 → 43.8 across steps 50–200) is **specific to n16bs16
+> fullseq math training**. The canonical n1bs16 fullseq math run does NOT
+> exhibit this pattern — see `docs/main_results.md` (full-seq n1bs16 is
+> stable at 61–62% avg@4 across all 4 saved steps, no boxed repetition).
+>
+> Coding fullseq (n1bs16) does degrade — HumanEval drops from 40.2 (step 50)
+> to 26.8 (step 400) — but the failure mode is different and is the relevant
+> "stability" evidence for the paper.
+>
+> When using this file:
+> - `66.75%` is the n16bs16 pos-200tok number — **not comparable** to
+>   anything in `docs/main_results.md`.
+> - The repetition pattern itself is real and informative, but cite carefully:
+>   the paper's stability claim should rest on coding fullseq (n1bs16) and
+>   funcall fullseq, not on this math n16bs16 evidence alone.
+>
+> Last updated: 2026-04-30. Moved from `docs/fullseq_degradation_analysis.md`.
+
+---
+
 Loaded fullseq_step50: 500 problems
 Loaded fullseq_step100: 500 problems
 Loaded fullseq_step150: 500 problems

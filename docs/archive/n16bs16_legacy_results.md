@@ -1,3 +1,32 @@
+# LEGACY: n16bs16 (and n1bs1) results — DO NOT QUOTE WITHOUT CHECKING
+
+> **READ THIS FIRST.**
+>
+> The canonical recipe for the paper is **n1bs16** (n_samples=1, batch_size=16,
+> 3200 problems). Numbers in this file are *not directly comparable* to that
+> recipe — they were collected under different settings:
+>
+> - **n16bs16** = n_samples=16, 200 problems, batch_size=16. Older series.
+>   Different fullseq behavior (severe `\boxed{}` repetition collapse — see
+>   `fullseq_degradation_n16bs16_only.md`). Position-sweep numbers diverge from
+>   n1bs16 by 1–4pp.
+> - **n1bs1** = n_samples=1, batch_size=1, 3200 problems. Was an unintended
+>   bug; kept because it eventually surpasses n16bs16 with 16× more data, but
+>   only `pass@4` was logged. Not used in the paper.
+>
+> **Rule for this repository:** when quoting numbers in the paper or in the
+> deck, use `docs/main_results.md` (n1bs16 only). Numbers from this file
+> belong only in an appendix that explicitly discusses the batch-config
+> comparison.
+>
+> Likely future use: a separate appendix or supplementary section on how
+> diversity (batch composition) affects OPD. Until then, **do not import
+> these numbers into any new analysis without explicitly tagging the config**.
+>
+> Last updated: 2026-04-30. Moved from `docs/batch_config_comparison.md`.
+
+---
+
 # Batch Configuration Comparison for On-Policy Distillation
 
 This report compares how different batch configurations affect distillation performance on MATH-500. All experiments use the same student (Qwen2.5-Math-1.5B) and teacher (Qwen3-1.7B) with reverse KL loss.

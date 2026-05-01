@@ -1,6 +1,6 @@
 # Stability: Multi-Seed Results
 
-### 3 seeds, Qwen LoRA, MATH-500 avg@4
+### 3 seeds, Qwen LoRA n1bs16, MATH-500 avg@4 at step 200 (last-boxed)
 
 <br>
 
@@ -9,33 +9,37 @@
 
 | Seed | pos-100 | fullseq |
 |------|---------|---------|
-| 42 | 65.85% | 65.60% → **37.75%** ⚠️ |
-| 123 | 61.00% | **50.45%** ⚠️ |
+| 42 | **65.85%** | 62.35% |
+| 123 | 61.00% | **50.45%** ⚠️ **below baseline** |
 | 456 | 60.40% | 57.55% |
 | **Mean** | **62.42%** | **56.78%** |
-| **Std** | **2.9** | **6.1** |
-| **Collapse** | **0 / 3** | **2 / 3** |
+| **Std** | **3.0** | **6.0** |
+| **Δ baseline (50.95)** | +11.5 ± 3.0 | +5.8 ± 6.0 |
 
 </div>
 <div style="width: 50%;">
 
 ### Key takeaway:
 
-- pos-100 is **2.6× more stable** (std 2.9 vs 6.1)
-- Fullseq **collapses in 2/3 seeds**
-- pos-100 mean is **+5.6pp higher**
+- pos-100 std is **2.0× tighter** (3.0 vs 6.0)
+- pos-100 mean is **+5.6pp higher** than fullseq
+- **pos-100 wins on every seed**
+- Fullseq seed 123 = **50.45% < 50.95% baseline** — **200 steps of training made it worse than no training** (`\boxed{}` repetition mode)
 
 <br>
 
-**The advantage is not just performance — it's reliability.**
+**The advantage is not just average performance — it's reliability.**
 
-With fullseq, you might get 65% or 38%. With positional, you reliably get ~62%.
+With fullseq, **1 of 3 seeds actively degrades below baseline** — 200 steps made it worse than no training. With positional, every seed clears baseline by ≥9pp.
 
 </div>
 </div>
 
 <!--
 [~1.5 min]
-This addresses the reviewer concern about single-seed results.
-The variance difference (2.9 vs 6.1) is the key number.
+3-seed n1bs16 stability test, last-boxed extraction (canonical metric).
+The variance difference (3.0 vs 6.0; 2.0× tighter) is the headline.
+Seed 123 fullseq = 50.45% essentially equals baseline (50.95%) —
+that IS the reward-hack failure mode (boxed-rep), and we report it
+under the canonical metric, not a "fixed" extraction.
 -->

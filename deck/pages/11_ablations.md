@@ -3,20 +3,17 @@
 <div style="display: flex; gap: 2rem; align-items: flex-start;">
 <div style="width: 33%;">
 
-### Position Sweep (Qwen Math)
+### Position Sweep (Qwen Math, n1bs16)
 
 | N | avg@4 |
 |---|-------|
-| 5 | 56.50 |
-| 10 | 59.50 |
-| 20 | 60.20 |
-| 50 | 62.45 |
-| **100** | **64.25** |
-| 150 | 65.70 |
-| **200** | **66.75** |
-| fullseq | 62→38 ⚠️ |
+| **50** | **66.65** |
+| 100 | 65.85 |
+| **150** | **66.65** |
+| 200tok | 66.05 |
+| fullseq | 62.35 |
 
-Diminishing returns past N=100. Fullseq collapses.
+Pos-50/150 ≈ +4.3pp over fullseq. Position dominates KL coverage.
 
 </div>
 <div style="width: 33%;">

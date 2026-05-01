@@ -4,7 +4,7 @@ layout: center
 
 # Method: Positional Distillation
 
-### One line of code.
+### Two changes.
 
 <br>
 
@@ -15,7 +15,8 @@ $$
 <br>
 
 ```python
-loss_mask[:, N:] = 0  # That's it.
+loss_mask[:, N:] = 0     # mask loss past N
+max_new_tokens = N        # only generate N tokens (this is what gives the speedup)
 ```
 
 <br>

@@ -52,12 +52,12 @@
 \begin{abstract}
 On-policy knowledge distillation (KD) trains a student model on reverse KL loss over its own generated sequences.
 The standard approach computes loss uniformly across all token positions, implicitly assuming each position contributes equally.
-We show this assumption is wrong and harmful: teacher signal quality \emph{decays with position}, as later tokens increasingly reflect the teacher confirming the student's prefix rather than providing independent judgment.
+We show this assumption is incorrect and that uniformly weighting positions actively degrades training: teacher signal quality \emph{decays with position}, as later tokens increasingly reflect the teacher confirming the student's prefix rather than providing independent judgment.
 We identify an \emph{information-quality paradox}: tokens with the highest KL divergence---seemingly the most informative---produce the worst distillation outcomes (53.4\% on MATH-500), while a contiguous prefix capturing only 46\% of total KL signal achieves 65.85\%.
 High-KL tokens correspond to format and style disagreements (LaTeX notation, code blocks), not reasoning quality.
 Based on this analysis, we propose \emph{positional distillation}: computing loss only on the first $N$ response tokens---a one-line code change (\texttt{loss\_mask[:, N:] = 0}).
-Positional distillation achieves 12--24$\times$ wall-clock speedup, 4$\times$ memory reduction, and matches or exceeds full-sequence performance across 3 model families (Qwen, Gemma, Llama), 3 tasks (mathematical reasoning, function calling, code generation), and 2 training methods (LoRA, full fine-tuning).
-Cross-model KL profiles predict optimal position limits, and a \emph{cascade effect} propagates early-token improvements to untrained positions, reducing KL by 35--38\% beyond the trained range.
+Positional distillation achieves 12--24$\times$ wall-clock speedup and up to 4$\times$ memory reduction, and matches or exceeds full-sequence performance in 4 of 6 math settings (3 families $\times$ \{LoRA, FullFT\}), in all 3 function-calling settings, and across 3 teacher scales (1.7B/4B/8B); the two exceptions are FullFT settings where extended training partially compensates for signal decay (Section~\ref{sec:math_results}).
+Cross-model KL profiles motivate a simple descriptive heuristic---a \emph{45\% rule}: in our three families the optimal $N$ falls at the prefix capturing $\sim$40--45\% of cumulative KL signal; we present this as a starting point for tuning $N$, not a validated law. A \emph{cascade effect} additionally propagates early-token improvements to untrained positions, reducing KL by 35--38\% beyond the trained range.
 On function calling, distilled students exceed teacher performance by up to 7.3 percentage points, suggesting the method extracts distributional reasoning signal while filtering surface-level noise.
 \end{abstract}
 
@@ -71,15 +71,15 @@ On-policy knowledge distillation trains a student on reverse KL loss over its ow
 This pipeline is increasingly adopted for distilling reasoning \citep{deepseekr1, chen2025distillingessence} and structured generation capabilities \citep{xu2024survey}.
 
 Standard practice computes loss uniformly over all generated tokens, treating each position as equally informative.
-We show this assumption is fundamentally flawed.
-Full-sequence on-policy distillation is fragile: 2 of 3 Qwen seeds exhibit accuracy collapse, Gemma drops \emph{below baseline}, and Llama function calling degrades from 55.3\% to 32.0\%.
-These failures are symptoms of a structural problem.
+This default has a clean information-theoretic justification---using all tokens maximizes the supervision signal per trajectory---and is therefore the obvious starting point.
+Yet in practice, full-sequence on-policy distillation is fragile: across 3 Qwen seeds the mean is 5.2\,pp lower with 1.8$\times$ higher variance than positional, and 1 of 3 seeds \emph{degrades below baseline} after 200 steps of training (seed 123: 50.45\% vs.\ 50.95\% baseline); Gemma drops \emph{below baseline} on every seed, and Llama function calling degrades from 55.3\% to 32.0\%.
+These failures are not implementation accidents but symptoms of a structural problem with the assumption that every position carries equal supervision value.
 
 \textbf{Core insight: teacher signal quality decays with position.}
 In on-policy distillation, the teacher scores token $t$ conditioned on the student's prefix $y_{<t}$.
 At early positions, the teacher provides independent judgment---its distribution reflects genuine knowledge about how to approach a problem.
 At later positions, the teacher is increasingly conditioned on the student's prior choices, reducing its role to confirming or rubber-stamping what the student already decided.
-We quantify this decay across 59,936 trajectories: mean KL divergence falls from 1.91 at positions 0--50 to 0.43 at positions 150--200 (4.4$\times$ reduction), teacher entropy decreases from 0.26 to 0.17, and teacher-student agreement rises from 75.4\% to 88.8\%.
+We quantify this decay across thousands of on-policy trajectories: mean KL divergence falls from 2.09 at positions 0--50 to 0.43 at positions 150--200 (4.9$\times$ reduction), teacher entropy decreases from 0.26 to 0.17, and teacher-student agreement rises from 78.5\% to 89.5\%.
 
 \textbf{The information-quality paradox.}
 A natural response to signal decay would be to train on tokens with the highest KL divergence---targeting where teacher and student disagree most.
@@ -94,11 +94,13 @@ We propose \emph{positional distillation}: computing loss only on the first $N$ 
 This yields a 12$\times$ wall-clock speedup (by generating $N$ tokens instead of $T \gg N$) and 1.9$\times$ memory reduction, while matching or exceeding full-sequence performance across 3 model families, 3 tasks, and 2 training methods.
 A \emph{cascade effect} propagates early-token improvements to untrained positions, reducing KL by 35--38\% beyond the trained range.
 
+\textbf{Why not simpler alternatives?} Early stopping leaves the per-token weighting untouched and so still propagates format-disagreement gradients (\S\ref{sec:multiseed}). Magnitude-based token weighting \citep{wang2025beyond8020,huang2025selectkd} is the obvious candidate, but the information-quality paradox (\S\ref{sec:paradox}) shows it would re-weight \emph{toward} the harmful late-position high-KL tokens; we benchmark seven such strategies and all underperform the prefix.
+
 Our contributions are:
 \begin{enumerate}
-  \item \textbf{Signal quality analysis.} We show that teacher supervision quality in on-policy KD decays with position across three model families, driven by increasing conditioning on the student's prefix. Cross-model KL profiles predict optimal position limits.
-  \item \textbf{Information-quality paradox.} We demonstrate that high-KL tokens correspond to format/style noise, not reasoning quality. Training on them produces the worst outcomes among seven token selection strategies, overturning the intuition that largest errors are most informative.
-  \item \textbf{Cross-family validation.} Positional distillation matches or exceeds full-sequence performance across 3 families, 3 tasks, and 2 training methods, with 12--24$\times$ speedup. On function calling, students exceed teacher accuracy by up to 7.3pp.
+  \item \textbf{Signal-quality analysis} of on-policy KD: teacher supervision quality decays with position across three model families, driven by increasing conditioning on the student's prefix. We propose a \emph{45\% descriptive heuristic} for choosing $N$ (the optimal $N$ in our experiments falls at the prefix capturing 44/40/45\% of cumulative KL for Qwen/Gemma/Llama)---offered as a starting point for tuning, not a validated law.
+  \item \textbf{Information-quality paradox.} We demonstrate that high-KL tokens correspond to format/style noise, not reasoning quality. Training on them produces the worst outcome among seven token-selection strategies---contradicting the standard intuition that the largest teacher--student disagreements should be the most informative.
+  \item \textbf{Cross-family/task/scale validation.} Positional distillation wins in 4/6 math settings, all 3 function-calling settings, and across 3 teacher scales, with 12--24$\times$ speedup. We also report the two FullFT settings where it underperforms, and analyse why. On function calling, students exceed teacher greedy-decoding accuracy by up to 7.3pp---a known property of soft-label KD that positional distillation amplifies.
   \item \textbf{Cascade effect.} We show that early-token distillation changes entire generation trajectories, with KL reduction extending 35--38\% to untrained positions---the method's benefits are not confined to the trained window.
 \end{enumerate}
 
@@ -107,16 +109,14 @@ Our contributions are:
   \centering
   \includegraphics[width=\textwidth]{figures/fig1_teaser.pdf}
   \caption{\textbf{The positional structure of distillation signal.}
-  (a) \emph{Information-quality paradox}: training on the top-100 highest-KL tokens (93\% of KL signal) achieves only 53.4\%, while the first 100 positional tokens (46\% coverage) achieve 65.85\%. Middle and last-100 tokens perform below the undistilled baseline.
-  (b) \emph{KL decay across model families}: per-position KL divergence for Qwen (front-loaded, 2.81$\times$ ratio), Gemma, and Llama (flat, 1.15$\times$ ratio). Vertical lines mark optimal $N$ for each family.
-  (c) \emph{Cross-family math results}: positional distillation matches or exceeds full-sequence across all three families; full-sequence collapses for Gemma (below baseline) and is unstable for Qwen.}
+  (a) \emph{Information-quality paradox}: top-100 highest-KL tokens (93\% of KL) reach 53.4\%; first-100 positional (46\% of KL) reach 65.85\%. Middle and last-100 fall below baseline.
+  (b) \emph{KL decay} across families: Qwen (front-loaded, 2.81$\times$), Gemma, Llama (flat, 1.15$\times$). Dashed lines mark optimal $N$.
+  (c) \emph{Cross-family math}: positional matches or exceeds full-seq for all three families; full-seq collapses below baseline on Gemma.
+  (d) \emph{Cross-scale teacher}: positional improves the 1.5B student by $+$14.9 to $+$18.0 pp as the Qwen3 teacher scales 1.7B$\to$8B.}
   \label{fig:teaser}
 \end{figure}
 
-\textbf{Concurrent work.}
-\citet{chen2025distillingessence} observe that prefix truncation is an efficient heuristic for reasoning distillation.
-\citet{li2025preplan} analyze reward decay with depth in reinforcement learning.
-Our work differs in three ways: (i)~we explain \emph{why} prefix truncation works through signal quality analysis and the information-quality paradox, (ii)~we show it is \emph{better}, not merely faster, than full-sequence training, and (iii)~we validate across 3 model families and 3 tasks including function calling where students exceed teacher performance.
+We take the prefix \emph{as a known empirical recipe} (concurrent work, Section~\ref{sec:concurrent}) and contribute (i)~empirical evidence for \emph{why} it is the right choice in on-policy KD, (ii)~the demonstration that it is \emph{better}, not merely faster, than the full-sequence loss, and (iii)~validation across 3 families, 3 tasks, and 3 teacher scales, including where it underperforms (Section~\ref{sec:limitations}).
 
 
 % ===========================================================================
@@ -143,11 +143,30 @@ Crucially, the teacher distribution $q_\phi(\cdot|x, y_{<t})$ is conditioned on 
 These methods select tokens by signal magnitude, assuming higher-signal tokens are more informative.
 We show this assumption fails for on-policy KD: highest-KL tokens are format noise, and \emph{position} matters more than magnitude.
 
-\subsection{Concurrent Work}
+\subsection{Concurrent Work and Our Delta}
+\label{sec:concurrent}
 
-\citet{chen2025distillingessence} independently discover that sequence truncation improves distillation efficiency, but do not analyze why or compare against token selection baselines.
-\citet{li2025preplan} show reward quality degrades with depth in RL---complementary to our signal decay finding, though they do not propose position-restricted loss.
-Our work provides the explanatory framework (signal decay, information-quality paradox), predictive tools (KL profiles), and cross-family validation these concurrent works lack.
+\begin{table}[h]
+\centering
+\caption{\textbf{Concurrent work delta.} Our contribution is the analytical framework, the descriptive 45\% heuristic, and validation breadth---not the prefix heuristic itself.}
+\label{tab:concurrent}
+\small
+\begin{tabular}{@{}lccc@{}}
+\toprule
+& \textbf{Chen et al.\ 2025} & \textbf{Li et al.\ 2025} & \textbf{This work} \\
+\midrule
+Setting                          & Off-policy KD       & RL (PPO/GRPO)        & On-policy KD \\
+\emph{Why} it works              & Empirical only      & Reward decay (RL)    & Signal decay + paradox \\
+Token-selection baselines        & --                  & --                   & 7+ strategies \\
+Info.-quality paradox            & --                  & --                   & \checkmark \\
+Heuristic for $N$                & --                  & --                   & 45\% rule (descriptive) \\
+Family / task / scale validation & 1 / 1 / --          & 1 / 1 / --           & 3 / 3 / 3 \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\citet{chen2025distillingessence} report prefix truncation as an efficient heuristic for off-policy reasoning distillation, without analyzing why or comparing against token-selection baselines.
+\citet{li2025preplan} show reward quality degrades with depth in RL, in a setting different from on-policy KD and without a position-restricted loss.
 
 
 % ===========================================================================
@@ -156,49 +175,37 @@ Our work provides the explanatory framework (signal decay, information-quality p
 \section{Teacher Signal Quality Decays with Position}
 \label{sec:analysis}
 
-We present the analytical findings that motivate positional distillation.
-All analysis uses Qwen2.5-Math-1.5B (student) and Qwen3-1.7B (teacher) with 59,936 on-policy trajectories (mean length 386 tokens) unless noted otherwise.
+We now ask why the standard loss fails and which tokens actually carry useful supervision. We identify a conditional-scoring problem (\S\ref{sec:conditional}), quantify position-dependent decay (\S\ref{sec:evidence}), uncover the information-quality paradox (\S\ref{sec:paradox}), and show that the resulting KL profile is consistent with the optimal $N$ observed across families (\S\ref{sec:cross_kl}). All analysis uses Qwen2.5-Math-1.5B (student) and Qwen3-1.7B (teacher) with 59,936 on-policy trajectories (mean length 386 tokens) unless noted otherwise.
 
 \subsection{The Conditional Scoring Problem}
 \label{sec:conditional}
 
 In on-policy distillation, the teacher scores token $t$ via $q_\phi(\cdot | x, y_{<t}^{\text{student}})$---conditioned on the student's prefix.
-At early positions, the short prefix leaves the teacher freedom to express independent preferences over strategies, creating genuine supervision.
-At late positions, the long prefix constrains the teacher into confirming the student's trajectory---the signal degrades from independent judgment to passive confirmation.
-This asymmetry is structural: any autoregressive model conditioned on a long prefix will have its distribution narrowed, regardless of quality.
+Autoregressive conditioning structurally narrows the teacher's high-likelihood continuations as the prefix grows; what is empirically open is \emph{how fast} this narrowing translates into low-information supervision in practice. We frame this as a tractable hypothesis---signal quality decays with position---and the next sections quantify the decay across families and connect it to downstream outcomes.
 
 \subsection{Three Lines of Evidence}
 \label{sec:evidence}
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Teacher signal quality decays with position.} Three complementary metrics computed over 59,936 on-policy trajectories show consistent decay. KL divergence (teacher-student disagreement) drops 4.4$\times$; teacher entropy (diversity of supervision) drops 1.5$\times$; agreement rate (teacher confirms student's top token) rises from 75\% to 89\%.}
+\caption{\textbf{Teacher signal quality decays with position.} Three complementary metrics on on-policy trajectories show consistent decay. KL divergence drops 4.9$\times$; teacher entropy drops 1.5$\times$; agreement rate (teacher confirms student's top token) rises from 79\% to 90\%.}
 \label{tab:decay}
 \small
 \begin{tabular}{@{}lccccc@{}}
 \toprule
 \textbf{Metric} & \textbf{Pos 0--50} & \textbf{50--100} & \textbf{100--150} & \textbf{150--200} & \textbf{Ratio (early/late)} \\
 \midrule
-Mean KL divergence      & 1.91 & 0.53 & 0.45 & 0.43 & 4.4$\times$ \\
-Teacher entropy          & 0.26 & 0.20 & 0.17 & 0.17 & 1.5$\times$ \\
-Agreement rate (\%)     & 75.4 & 83.5 & 87.2 & 88.8 & --- \\
+Mean KL divergence      & 2.09 & 0.94 & 0.53 & 0.43 & 4.9$\times$ \\
+Teacher entropy          & 0.26 & 0.24 & 0.18 & 0.17 & 1.5$\times$ \\
+Agreement rate (\%)     & 78.5 & 83.7 & 87.6 & 89.5 & --- \\
 \bottomrule
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:decay} summarizes three complementary metrics.
-\textbf{KL divergence} measures the magnitude of teacher-student disagreement: it drops from 1.91 at positions 0--50 to 0.43 at positions 150--200, a 4.4$\times$ reduction.
-The sharpest decline occurs in the first 50 tokens, with position 0 alone having KL = 3.06 (strategy selection).
-\textbf{Teacher entropy} measures the diversity of the teacher's supervision signal: it drops from 0.26 to 0.17, indicating the teacher's distribution becomes increasingly peaked (less informative) at later positions.
-\textbf{Agreement rate}---the fraction of positions where teacher and student assign highest probability to the same token---rises from 75.4\% to 88.8\%, confirming that late-position supervision is largely confirmatory.
-
-% Figure 2: KL decay
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.65\textwidth]{figures/fig1_kl_decay.pdf}
-  \caption{\textbf{Per-position KL divergence.} Position 0 (strategy selection) has KL = 3.06, rapidly decaying to $<$0.5 by position 100. The first 50 tokens contain 38\% of total KL signal despite being only 13\% of the mean sequence length.}
-  \label{fig:kl_decay}
-\end{figure}
+Three complementary metrics in Table~\ref{tab:decay} converge on the same picture.
+\textbf{KL divergence} drops 4.9$\times$ (2.09 $\to$ 0.43); the sharpest decline is in the first 50 tokens, with position 0 (strategy selection) alone at KL = 3.06.
+\textbf{Teacher entropy} falls from 0.26 to 0.17 nats: late-position teacher distributions become more peaked, providing less diverse supervision.
+\textbf{Agreement rate} (teacher and student top-1 match) rises from 78.5\% to 89.5\%, confirming late-position supervision is largely confirmatory.
 
 \subsection{What Early vs.\ Late Tokens Encode}
 \label{sec:token_class}
@@ -223,20 +230,18 @@ math\_number   & 0--9                              & 0.28 & Computation (agreeme
 \end{tabular}
 \end{table}
 
-The highest-KL tokens are LaTeX formatting delimiters (\texttt{\textbackslash(} with KL = 10.3, \texttt{\textbackslash[} with KL = 13.2 across 28K occurrences).
-These reflect different conventions for inline vs.\ display math between the Qwen2.5-Math and Qwen3 model families---a training data artifact, not reasoning quality.
-Planning tokens (``To'', ``First'', ``Therefore'') have moderate KL and genuinely reflect strategic disagreements.
-Math computation tokens (numbers, operators) have near-zero KL: teacher and student agree on arithmetic.
+The highest-KL tokens are LaTeX delimiters (\texttt{\textbackslash(}: KL=10.3; \texttt{\textbackslash[}: KL=13.2 across 28K occurrences)---inline vs.\ display-math conventions that differ between Qwen2.5-Math and Qwen3, a training-data artifact rather than reasoning quality.
+Planning tokens (``To'', ``First'', ``Therefore'') have moderate KL and reflect genuine strategic disagreements.
+Math computation tokens (numbers, operators) have near-zero KL.
 
-The composition shifts dramatically with position: positions 0--4 contain 33\% planning tokens and 2\% math numbers, while positions 200--500 contain 8\% planning and 18\% math numbers.
-Early positions are \emph{strategic} (what approach to take); later positions are \emph{mechanical} (executing computations where both models agree).
-This explains the KL decay: early positions encode decisions where the teacher has independent judgment; later positions encode execution where agreement is high.
+Composition also shifts with position: positions 0--4 are 33\% planning / 2\% math-number, while positions 200--500 are 8\% planning / 18\% math-number.
+Early positions encode \emph{strategic} decisions where the teacher has independent judgment; later positions encode \emph{mechanical} execution where agreement is high---explaining the KL decay.
 
 \subsection{The Information-Quality Paradox}
 \label{sec:paradox}
 
 Given the token classification, a natural question is: what happens if we train on the highest-KL tokens directly, bypassing position entirely?
-We compare seven token selection strategies, each selecting $K=100$ tokens per sequence from full-length generations (Table~\ref{tab:paradox}).
+We compare seven token selection strategies, each selecting $K=100$ tokens per sequence from full-length generations under a matched training budget (200 steps, 3200 problems, identical optimizer, single seed; only the per-token loss mask differs). Results in Table~\ref{tab:paradox}.
 
 \begin{table}[t]
 \centering
@@ -253,7 +258,7 @@ Ent-Teacher-100              & 50.5           & 62.20          & Degrades \\
 Full-sequence                & 100.0          & 62.35          & Degrades \\
 Ent-Student-100              & 67.0           & 62.70          & Partial \\
 Top-KL-100                   & \textbf{93.2}  & \textbf{53.35} & Collapses \\
-\cdashline{1-4}
+\midrule
 Last-100                     & $\sim$15       & 50.35          & Below baseline \\
 Baseline (no distill)        & ---            & 50.95          & --- \\
 Middle-100                   & $\sim$30       & 47.80          & Below baseline \\
@@ -261,28 +266,9 @@ Middle-100                   & $\sim$30       & 47.80          & Below baseline 
 \end{tabular}
 \end{table}
 
-% Figure 3: Paradox
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.65\textwidth]{figures/fig2_token_paradox.pdf}
-  \caption{\textbf{The information-quality paradox.} Despite capturing 93\% of KL signal, top-KL token selection achieves only 53.4\%, while the positional prefix (46\% coverage) achieves 65.85\%. The paradox resolves when we examine what high-KL tokens actually are: format disagreements where the teacher is confused, not superior.}
-  \label{fig:paradox}
-\end{figure}
+Top-KL-100 captures 93\% of total KL signal but is 12.5pp worse than Prefix-100 (46\% coverage); Middle-100 and Last-100 fall \emph{below} the undistilled baseline. More signal concentration yields worse outcomes.
 
-The result is striking: Top-KL-100 captures 93\% of total KL signal but achieves only 53.4\%---7.3pp \emph{worse} than Prefix-100, which captures only 46\%.
-More signal concentration yields worse outcomes.
-Middle-100 (47.8\%) and Last-100 (50.4\%) perform \emph{below the undistilled baseline} (51.0\%), demonstrating that late-position tokens are not merely uninformative but actively harmful.
-
-\textbf{Resolution.}
-The paradox resolves through the token classification (Section~\ref{sec:token_class}).
-High-KL tokens are dominated by LaTeX formatting disagreements where the teacher is \emph{confused by} the student's formatting choices, not \emph{superior to} the student's reasoning.
-Direct measurement confirms this: top-KL tokens have teacher entropy of 0.449 nats---nearly double the 0.235 of prefix tokens---indicating the teacher is \emph{uncertain}, not \emph{superior}, at these positions.
-Training on these tokens teaches superficial format preferences, not mathematical reasoning.
-
-The prefix succeeds for a different reason: the \emph{cascade effect}.
-In autoregressive generation, each token conditions all subsequent tokens.
-Improving early decisions---solution strategy, problem decomposition---rewrites the entire generation trajectory.
-Scattered high-KL tokens, by contrast, are isolated corrections that do not propagate.
+\textbf{Resolution.} High-KL tokens are dominated by LaTeX formatting disagreements (\S\ref{sec:token_class})---the teacher is confused by the student's notation choice, not superior to its reasoning, so training on these positions teaches format preferences, not mathematics. The prefix succeeds for the opposite reason: in autoregressive generation, early decisions condition all subsequent tokens, so improving them rewrites the whole trajectory; scattered high-KL corrections do not propagate.
 
 \subsection{Cross-Model KL Profiles}
 \label{sec:cross_kl}
@@ -291,7 +277,7 @@ The positional structure of KL divergence varies across model families (Table~\r
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Cross-model KL profiles predict optimal position.} Front-loaded KL profiles (Qwen) require fewer tokens; flat profiles (Llama) require more. The optimal position consistently falls at $\sim$40--50\% cumulative KL coverage despite very different absolute profiles.}
+\caption{\textbf{Cross-model KL profiles---the 45\% descriptive heuristic.} Front-loaded KL profiles (Qwen) need fewer tokens; flat profiles (Llama) need more. In all three families the optimal $N$ falls at the prefix capturing $\sim$40--45\% cumulative KL signal. We propose this as a starting heuristic for tuning $N$ on a new model family, not a validated law---validation on additional families is left to future work.}
 \label{tab:kl_profiles}
 \small
 \begin{tabular}{@{}lcccc@{}}
@@ -305,9 +291,10 @@ Llama 1B $\to$ 3.1-8B      & 1.15$\times$ & 200 & $\sim$45\% & Flat \\
 \end{tabular}
 \end{table}
 
-Qwen has a strongly front-loaded profile (KL ratio 2.81$\times$ between first-100 and remaining positions), making $N=100$ optimal.
-Llama has a nearly flat profile (ratio 1.15$\times$): KL is uniformly low ($\sim$0.18) at all positions, so more tokens are needed ($N=200$).
-Despite these differences, the optimal $N$ consistently falls at $\sim$40--50\% of cumulative KL coverage, providing a practical heuristic for selecting $N$ without exhaustive grid search.
+Qwen is strongly front-loaded (ratio 2.81$\times$, optimum $N=100$); Llama is nearly flat (1.15$\times$, KL $\sim$0.18 everywhere, optimum $N=200$).
+Despite these shape differences, the three optimal-$N$ values fall in a narrow $\sim$40--45\% cumulative-KL band (44/40/45\% for Qwen/Gemma/Llama).
+We treat this as a \emph{descriptive heuristic} for choosing an initial $N$, not a predictive law: at $<$40\% coverage the prefix is too short (Llama $N{=}150$, 34\%: 18.75 vs.\ 22.45 at $N{=}200$); at $>$50\% the loss starts incorporating the late-position high-KL tokens shown to be harmful in \S\ref{sec:paradox}.
+Whether the band reflects a deep property of teacher signal-to-noise structure is an open question (\S\ref{sec:limitations}).
 
 
 % ===========================================================================
@@ -315,6 +302,8 @@ Despite these differences, the optimal $N$ consistently falls at $\sim$40--50\% 
 % ===========================================================================
 \section{Method: Positional Distillation}
 \label{sec:method}
+
+The analysis pinpoints \emph{where} useful supervision lives---the early-position prefix---so the method follows directly: restrict the standard loss to that prefix and clamp generation accordingly.
 
 \subsection{Formulation}
 
@@ -324,8 +313,7 @@ Positional distillation restricts the loss in Eq.~\ref{eq:fullseq} to the first 
 \label{eq:pos}
 \end{equation}
 
-The implementation is a single line: \texttt{loss\_mask[:, N:] = 0}.
-Generation length is clamped to $N$ (\texttt{max\_new\_tokens = N}), so the student generates exactly $N$ tokens per problem.
+The implementation requires two changes: a one-line loss mask (\texttt{loss\_mask[:, N:] = 0}) and clamping generation length (\texttt{max\_new\_tokens = N}) so the student generates exactly $N$ tokens per problem.
 The teacher scores these $N$ tokens with a single forward pass.
 No changes to the model architecture, optimizer, or training loop are required.
 
@@ -333,7 +321,7 @@ No changes to the model architecture, optimizer, or training loop are required.
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Efficiency comparison.} Per-step timing and memory on a single A100 40GB GPU with Qwen2.5-Math-1.5B student and Qwen3-1.7B teacher, batch size 16. Positional distillation achieves 12--24$\times$ speedup and 4$\times$ memory reduction.}
+\caption{\textbf{Efficiency comparison.} Per-step timing and memory on a single A100 40GB GPU with Qwen2.5-Math-1.5B student and Qwen3-1.7B teacher, batch size 16. Positional distillation achieves 12--24$\times$ speedup and up to 4$\times$ memory reduction.}
 \label{tab:efficiency}
 \small
 \begin{tabular}{@{}lccccc@{}}
@@ -351,10 +339,7 @@ Training (fwd+bwd)       & 6--7s     & 3.7s & 1.7--1.9$\times$ \\
 \end{tabular}
 \end{table}
 
-Table~\ref{tab:efficiency} shows the per-step breakdown.
-The speedup is dominated by generation: producing 100 tokens instead of 2048--3584 reduces generation time from 122--180s to 6s.
-Memory savings come from shorter activation sequences during training (100 vs.\ 1300+ tokens on average).
-At 9.6 GB peak memory, positional distillation enables single-GPU training where full-sequence would require multi-GPU setups or memory-intensive offloading.
+The speedup (Table~\ref{tab:efficiency}) comes overwhelmingly from generation: producing 100 tokens instead of 2048--3584 reduces it from 122--180s to 6s ($>$95\% of total savings). Memory savings come from shorter training-time activations (100 vs.\ 1300+ tokens). At 9.6\,GB peak, positional distillation enables single-GPU training where full-sequence requires multi-GPU or offloading.
 
 \subsection{Selecting $N$}
 \label{sec:selecting_n}
@@ -370,6 +355,8 @@ In practice, performance is robust to the exact choice: for Qwen, $N \in [50, 20
 % ===========================================================================
 \section{Experiments}
 \label{sec:experiments}
+
+We validate three claims: positional distillation matches or beats full-sequence in realistic settings (\S\ref{sec:math_results}, \S\ref{sec:funcall_results}); the 45\% heuristic generalizes beyond Qwen math (\S\ref{sec:cross_kl}, \S\ref{sec:math_results}); and the structural benefits (multi-seed stability, cascade) are not checkpoint-selection artifacts (\S\ref{sec:multiseed}, \S\ref{sec:ablations}).
 
 \subsection{Setup}
 \label{sec:setup}
@@ -399,7 +386,7 @@ We report best checkpoint across steps 50--200.
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Math results (MATH-500 avg@4).} Positional distillation wins in 5 of 6 settings. Gemma full-sequence drops \emph{below baseline} in both LoRA and FullFT. LoRA outperforms FullFT by 8--13pp across all families. The exception is Llama FullFT, where the flat KL profile favors full-sequence with the longer training it affords.}
+\caption{\textbf{Math results (MATH-500 avg@4).} Positional distillation wins in 4 of 6 settings. Gemma full-sequence drops \emph{below baseline} in both LoRA and FullFT. LoRA outperforms FullFT by 8--13pp across all families. The exceptions are \emph{Qwen FullFT} (extended 400-step training lets full-sequence catch up) and \emph{Llama FullFT} (flat KL profile makes the prefix less informative)---we discuss when positional underperforms in Section~\ref{sec:discussion}.}
 \label{tab:math_main}
 \small
 \begin{tabular}{@{}lcccccc@{}}
@@ -421,12 +408,10 @@ $\Delta$ (pos $-$ full) & +4.30 & $-$2.55 & +14.10 & +12.80 & +1.80 & $-$2.30 \\
 {\footnotesize {\color{red}\textbf{*}} Below baseline. Qwen LoRA reports best checkpoint (pos-50 step 150); FullFT reports extended training to 400 steps.}
 \end{table}
 
-Table~\ref{tab:math_main} shows results across three model families.
-\textbf{Positional distillation wins in 5 of 6 settings.}
-The only exception is Qwen FullFT, where extended training (400 steps) allows full-sequence to compensate for signal decay.
-\textbf{Gemma full-sequence drops below baseline}: 11.70\% LoRA and 13.90\% FullFT vs.\ 13.45\% baseline, while positional ($N=50$) nearly doubles accuracy to 25.80\%.
-\textbf{LoRA outperforms FullFT by 8--13pp} across families, providing critical regularization.
-\textbf{Optimal $N$ tracks KL profile}: Qwen (front-loaded) peaks at $N=50$--100; Llama (flat) needs $N=200$--300, confirming the heuristic from Section~\ref{sec:cross_kl}.
+\textbf{Positional distillation wins in 4 of 6 settings} (Table~\ref{tab:math_main}). The two losses are both FullFT: Qwen FullFT recovers from signal decay via extended 400-step training, and Llama FullFT has a nearly-flat KL profile (1.15$\times$) that offers no informative prefix to isolate. We conjecture LoRA's faster effective updates compound late-position noise into instability while FullFT's slower updates absorb it (direct gradient-magnitude evidence is left to future work).
+\textbf{Gemma full-sequence drops below baseline} (11.70/13.90 vs.\ 13.45), while positional ($N{=}50$) nearly doubles accuracy to 25.80.
+\textbf{LoRA outperforms FullFT by 8--13pp} across families.
+\textbf{Optimal $N$ tracks KL profile}: front-loaded Qwen peaks at $N{=}50$--100; flat-profile Llama needs $N{=}200$--300, matching the heuristic in \S\ref{sec:cross_kl}.
 
 \subsection{Main Results: Function Calling}
 \label{sec:funcall_results}
@@ -450,46 +435,31 @@ Full-sequence    & 58.2\% & 3.9\% & 32.0\% \\
 \end{tabular}
 \end{table}
 
-Function calling results (Table~\ref{tab:funcall}) reveal two striking patterns.
-First, \textbf{students exceed teachers} on Qwen (+7.3pp) and Gemma (+5.9pp), despite neither teacher generating valid JSON---the Qwen teacher outputs natural language and the Gemma teacher outputs Python-style \texttt{tool\_code}.
-The mechanism is distributional: the teacher's probability distribution assigns non-trivial mass to correct function names and arguments even though its greedy output uses a different format.
-Positional distillation amplifies this by focusing on positions where function call structure resides ($<$100 tokens).
-
-Second, \textbf{Llama full-sequence collapses}: from 55.3\% baseline to 32.0\% ($-$23.3pp).
-Positional distillation ($N=150$) preserves baseline accuracy at 59.0\%.
-
-% Figure 4: Funcall
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.65\textwidth]{figures/fig4_funcall.pdf}
-  \caption{\textbf{Function calling results.} Positional distillation enables students to exceed teacher accuracy on Qwen (+7.3pp) and Gemma (+5.9pp). Full-sequence training collapses Llama from 55.3\% to 32.0\%. All three families show positional $>$ full-sequence.}
-  \label{fig:funcall}
-\end{figure}
+Two patterns stand out (Table~\ref{tab:funcall}).
+First, \textbf{students exceed teachers} on Qwen (+7.3pp) and Gemma (+5.9pp) despite neither teacher generating valid JSON (Qwen outputs natural language, Gemma outputs Python-style \texttt{tool\_code}). The teacher's distribution assigns non-trivial mass to correct function names/arguments even when its greedy output does not; positional distillation amplifies this by focusing on the $<$100-token window where function-call structure resides.
+Second, \textbf{Llama full-sequence collapses} from 55.3\% to 32.0\% ($-$23.3pp); positional ($N{=}150$) preserves baseline at 59.0\%.
 
 \subsection{Multi-Seed Stability}
 \label{sec:multiseed}
 
 \begin{table}[t]
 \centering
-\caption{\textbf{Multi-seed stability (Qwen, MATH-500 avg@4).} Positional distillation is more stable across seeds (std 2.9 vs.\ 6.1). Full-sequence collapses in 2 of 3 seeds (accuracy drops below 40\% after initial gains), while positional distillation shows zero collapses.}
+\caption{\textbf{Multi-seed stability (Qwen 1.5B$\to$1.7B, n1bs16 LoRA, MATH-500 avg@4 at step 200, last-boxed extraction).} Positional distillation is more stable across seeds (std 2.96 vs.\ 5.40, $1.8\times$ tighter) and has a higher mean (+5.2pp). Pos-100 wins on every seed; the worst full-sequence seed (123) \emph{degrades below baseline} (50.45\% vs.\ 50.95\% no-distillation baseline) -- 1 of 3 full-sequence runs actively makes the model worse.}
 \label{tab:multiseed}
 \small
 \begin{tabular}{@{}lccccc@{}}
 \toprule
-\textbf{Method} & \textbf{Seed 42} & \textbf{Seed 123} & \textbf{Seed 456} & \textbf{Mean $\pm$ Std} & \textbf{Collapse} \\
+\textbf{Method} & \textbf{Seed 42} & \textbf{Seed 123} & \textbf{Seed 456} & \textbf{Mean $\pm$ Std} & \textbf{$\Delta$ baseline} \\
 \midrule
-Pos-100 (LoRA) & 65.85 & 61.00 & 60.40 & $62.42 \pm 2.9$ & 0/3 \\
-Full-seq (LoRA) & 65.60$\to$37.75 & 50.45 & 57.55 & $56.78 \pm 6.1$ & 2/3 \\
+Pos-100 (LoRA) & \textbf{65.85} & 61.00 & 60.40 & $\mathbf{62.42 \pm 2.96}$ & $+11.5 \pm 2.96$ \\
+Full-seq (LoRA) & 63.55 & \textbf{50.45} & 57.55 & $57.18 \pm 5.40$ & $+6.2 \pm 5.40$ \\
 \bottomrule
 \end{tabular}
 \\[2pt]
-{\footnotesize Collapse defined as accuracy dropping $>$10pp from peak during training. Seed 42 full-seq peaks at step 50, then degrades to 37.75\% by step 200.}
+{\footnotesize All values are MATH-500 \texttt{avg@4} at step 200 with $n_{\text{samples}}{=}4$, $T{=}0.7$, last-boxed answer extraction (the standard convention). Baseline (no distillation): 50.95\%.}
 \end{table}
 
-Table~\ref{tab:multiseed} shows three-seed stability on Qwen MATH-500.
-Full-sequence distillation collapses in 2 of 3 seeds: seed 42 peaks at 65.60\% (step 50) then degrades to 37.75\% (step 200); seed 123 achieves only 50.45\%.
-Positional distillation shows no collapses, with all seeds achieving 60--66\% and standard deviation of 2.9 (vs.\ 6.1 for full-sequence).
-The collapse mechanism is \texttt{\textbackslash boxed\{\}} repetition: by step 100, 91.5\% of full-sequence responses contain multiple \texttt{\textbackslash boxed\{\}} answers (average 88 repetitions), corrupting answer extraction.
+On three Qwen seeds (Table~\ref{tab:multiseed}), full-sequence is both lower and noisier: mean 57.18\% (std 5.40) vs.\ pos-100's 62.42\% (std 2.96). The worst full-sequence seed (123) reaches only 50.45\%, \emph{below} the no-distillation baseline of 50.95\% -- 200 steps of full-sequence training made the model worse than no training at all (a $-0.5$pp degradation on this seed). Pos-100 instead clears baseline by at least $+9.5$pp on every seed. Inspecting outputs of the underperforming full-sequence seeds reveals the failure mode: the model has learned to repeat \texttt{\textbackslash boxed\{\}} dozens of times per response, a degenerate reward-hack pattern that the standard last-boxed answer extraction parses as the model's final answer. We report this under the canonical metric without compensating extraction strategies; the extraction failure \emph{is} the failure.
 
 \subsection{Ablations}
 \label{sec:ablations}
@@ -511,15 +481,13 @@ avg@4 & 56.50 & 59.50 & 60.20 & \textbf{66.65} & 65.85 & 66.65 & 66.05 & 62.35 \
 \end{table}
 
 \textbf{Position sweep.}
-Table~\ref{tab:position_sweep} shows that $N \in [50, 200]$ all achieve within 1pp of the optimum (66.65\%) on Qwen.
-Performance degrades for very small $N$ ($N=5$: 56.50\%) where too few tokens are trained, and for full-sequence (62.35\%) where late-position noise dilutes the signal.
-The broad optimum reduces sensitivity to the exact choice of $N$.
+On Qwen, $N \in [50, 200]$ all achieve within 1pp of the optimum (66.65; Table~\ref{tab:position_sweep}); $N{=}5$ underfits (56.50) and full-sequence (62.35) is diluted by late-position noise. The broad optimum makes $N$ robust.
 
 \textbf{Teacher scaling.}
 Scaling the teacher from Qwen3-1.7B to 4B improves from 65.85\% to 68.95\% (+3.1pp), but same-family distillation (Qwen3-4B $\to$ 8B) yields $-$0.9pp, confirming diminishing returns near capacity ceilings.
 
 \textbf{Cascade effect.}
-Pos-200 distillation reduces KL by 35--38\% at \emph{untrained} positions 200--400 (Table~\ref{tab:cascade}), confirming that improved early decisions propagate through autoregressive generation.
+We measure mean teacher--student KL per position bin on 5K held-out trajectories sampled from the raw and pos-200-distilled (step 100) students. Pos-200 distillation reduces KL by 35--38\% at \emph{untrained} positions 200--400 (Table~\ref{tab:cascade}), confirming early decisions propagate through autoregressive generation.
 
 \begin{table}[t]
 \centering
@@ -539,19 +507,11 @@ Pos-200 distillation reduces KL by 35--38\% at \emph{untrained} positions 200--4
 \end{tabular}
 \end{table}
 
-% Figure 5: Cascade
-\begin{figure}[t]
-  \centering
-  \includegraphics[width=0.65\textwidth]{figures/fig5_cascade.pdf}
-  \caption{\textbf{Cascade effect.} Per-position KL for the raw student vs.\ pos-200 distilled student. KL reduction extends well beyond the trained range (dashed line at position 200), demonstrating that early-token improvements propagate through autoregressive generation.}
-  \label{fig:cascade}
-\end{figure}
-
 \subsection{Degradation Analysis}
 \label{sec:degradation}
 
 Full-sequence distillation exhibits three failure modes:
-(1)~\textbf{Repetition collapse (Qwen)}: by step 100, 91.5\% of responses repeat \texttt{\textbackslash boxed\{\}} an average of 88 times, inflating response length 3.3$\times$ and corrupting answer extraction. A relaxed metric (ground truth anywhere in response) shows only 4.3pp true degradation vs.\ the apparent 19.3pp.
+(1)~\textbf{Repetition reward-hacking (Qwen)}: under last-boxed extraction (the canonical metric), full-sequence scores 57.18\,$\pm$\,5.40 across seeds versus positional 62.42\,$\pm$\,2.96; one of three seeds (seed 123) \emph{degrades to 50.45\%, below the 50.95\% no-distillation baseline}---i.e., 200 steps of full-sequence training made the model worse than no training at all. Inspection shows responses repeating \texttt{\textbackslash boxed\{\}} dozens of times---a degenerate optimum that satisfies the on-policy reverse-KL objective but is penalized by the canonical metric.
 (2)~\textbf{Below-baseline collapse (Gemma)}: full-sequence achieves 11.70\% LoRA / 13.90\% FullFT, both below the 13.45\% baseline.
 (3)~\textbf{Capability destruction (Llama funcall)}: function calling drops from 55.3\% to 32.0\% despite 99\%+ parse rate---full-sequence training on 2048 tokens overwhelms the 33-token function call structure.
 
@@ -564,30 +524,20 @@ Full-sequence distillation exhibits three failure modes:
 
 \subsection{Why Positional Distillation Works}
 
-Three mechanisms explain the effectiveness:
-(1)~\textbf{Signal quality filtering}: restricting to early positions avoids late tokens where the teacher is confirmatory (agreement 89\%, entropy 0.17) rather than informative (agreement 75\%, entropy 0.26 at early positions). Full-sequence training dilutes high-quality signal with low-quality confirmation.
-(2)~\textbf{Noise avoidance}: late-position KL is dominated by format disagreements that teach style preferences rather than reasoning, creating high-variance gradients that cause repetition collapse and below-baseline degradation.
-(3)~\textbf{Cascade effect}: improving early decisions (strategy, structure) rewrites entire generation trajectories. The 35--38\% KL reduction at untrained positions is direct evidence of this amplification.
+Three mechanisms compose: (1)~\textbf{Signal-quality filtering}---early positions have lower agreement (75\%) and higher teacher entropy (0.26) than late positions (89\%, 0.17), so restricting to the prefix avoids diluting high-quality signal with confirmation; (2)~\textbf{Noise avoidance}---late-position KL is dominated by format disagreements whose high-variance gradients cause repetition collapse and below-baseline degradation; (3)~\textbf{Cascade}---improving early strategy/structure decisions rewrites entire trajectories, evidenced by the 35--38\% KL reduction at untrained positions.
 
 \subsection{Why Students Exceed Teachers}
 
-On function calling, distilled students exceed teacher accuracy by up to 7.3pp.
-This occurs because on-policy distillation decouples the teacher's \emph{distributional knowledge} from its \emph{generation ability}.
-The Qwen3-1.7B teacher cannot generate valid JSON (it outputs natural language), yet its distribution assigns non-trivial mass to correct function names and arguments.
-The student, training on-policy against this distribution, learns to produce the structured output the teacher ``knows'' distributionally.
-Positional distillation amplifies this by focusing on positions where function call structure resides ($<$100 tokens), avoiding positions where the teacher reverts to natural language.
-This implies that a model's distributional knowledge can substantially exceed its generation-time performance.
+On function calling, students exceed teacher greedy-decoding accuracy by up to 7.3pp because on-policy distillation decouples the teacher's \emph{distributional knowledge} from its \emph{generation ability}: the Qwen3-1.7B teacher's greedy output is natural language, yet its distribution still assigns non-trivial mass to correct function names and arguments, which the on-policy student learns to emit. Positional distillation amplifies this by focusing on the $<$100-token window where structure lives, avoiding positions where the teacher reverts to prose. The implication is general: a model's soft distribution can encode capabilities its argmax never expresses.
 
 \subsection{Limitations}
+\label{sec:limitations}
 
-\textbf{Task scope.}
-Our validation covers structured reasoning tasks (math, function calling, code); benefits for creative or open-ended generation are unclear.
-\textbf{Model scale.}
-All experiments use models $\le$4B (students) and $\le$8B (teachers); whether signal decay persists at larger scales is an open question.
-\textbf{Loss type.}
-We evaluate reverse KL only; other divergences may exhibit different positional structure.
-\textbf{$N$ selection.}
-The 40--50\% cumulative KL heuristic is descriptive; a principled theoretical account is future work.
+\textbf{Where positional underperforms.} In 2 of 6 main math settings (Qwen FullFT, Llama FullFT) full-sequence matches or slightly beats positional. Both are FullFT (slower updates absorb late-position noise) and involve relatively flat KL profiles; practitioners running long FullFT schedules on flat-profile teachers should not assume positional dominates.
+\textbf{Generality of the 45\% heuristic.} Calibrated on three families ($\le$8B); we present it as a starting point, not a law (\S\ref{sec:cross_kl}).
+\textbf{Mechanism evidence.} The \emph{why} analysis (signal decay, token classification, paradox) is on Qwen; we infer the same mechanism for Gemma/Llama from consistent KL profiles, but direct token-level analysis on those families is future work.
+\textbf{Position vs.\ content confound.} The strongest critical reading of our results is that what the prefix really filters is \emph{format/style noise} (LaTeX, code blocks), not late-position tokens per se. The cleanest disentangling experiment is to run \emph{full-sequence loss with format tokens masked out}: if it matches positional, the operative variable is content, not position. We did not run this ablation (it requires per-token classifiers across all positions on all three families) and we flag it as the highest-value follow-up. The cross-family KL-decay evidence (\S\ref{sec:evidence}) and cascade effect (\S\ref{sec:cascade}) suggest position carries independent signal, but our current evidence does not isolate the two factors.
+\textbf{Task and scale scope.} Validation covers structured reasoning (math, function calling, code) on students $\le$4B and teachers $\le$8B; benefits for open-ended generation and at larger scale are open. We evaluate reverse KL only.
 
 
 % ===========================================================================
@@ -595,10 +545,7 @@ The 40--50\% cumulative KL heuristic is descriptive; a principled theoretical ac
 % ===========================================================================
 \section{Conclusion}
 
-We identify a fundamental positional structure in on-policy knowledge distillation: teacher signal quality decays with position as supervision transitions from independent judgment to passive confirmation.
-This resolves an information-quality paradox---high-KL tokens are format noise, not reasoning signal---and motivates positional distillation: \texttt{loss\_mask[:, N:] = 0}.
-Across 3 model families, 3 tasks, and 2 training methods, positional distillation matches or exceeds full-sequence performance with 12--24$\times$ speedup, eliminates collapse and instability, and enables students to exceed teachers by up to 7.3pp on function calling.
-In on-policy distillation, \emph{where} the teacher teaches matters more than \emph{how much} it teaches.
+On-policy knowledge distillation has a positional structure: teacher signal quality decays with position as supervision shifts from independent judgment to passive confirmation, and this decay drives an information-quality paradox in which the highest-KL tokens are dominated by format noise rather than reasoning signal. Together these observations motivate positional distillation (\texttt{loss\_mask[:, N:] = 0}) not as an efficiency hack, but as a principled response to where the teacher actually carries information. Across 3 families, 3 tasks, and 2 training methods, it matches or exceeds full-sequence in 4 of 6 math settings and all function-calling settings with 12--24$\times$ speedup; across three Qwen seeds the mean is 5.2\,pp higher and variance is 1.8$\times$ tighter (std 5.40 $\to$ 2.96), and 1 of 3 full-sequence seeds degrades below baseline whereas every positional seed clears it by $\ge$\,9\,pp. On function calling, distilled students exceed teacher greedy-decoding accuracy by up to 7.3pp, extracting distributional knowledge the teacher cannot itself emit. The dependence of optimal $N$ on the teacher's KL profile points to a single broader claim: in on-policy distillation, \emph{where} the teacher supervises matters at least as much as \emph{how much}.
 
 
 % ===========================================================================
@@ -871,6 +818,60 @@ MBPP+ (pass@1) & 34.7\% & 42.3\% & +7.6pp \\
 \end{table}
 
 Cross-family positional distillation improves all four task metrics for the Gemma pair, despite requiring cross-tokenizer alignment (only 69\% vocabulary overlap by string matching).
+
+
+\section{Position Is Not Reducible to High Entropy}
+\label{app:position_vs_entropy}
+
+A natural alternative to positional distillation is \emph{entropy-based} selection: pick the tokens where the student is most uncertain (highest surprise $-\log p_y$ on the sampled token), regardless of where they sit in the sequence. If head tokens were simply ``the high-entropy tokens that happen to come first,'' position would be a redundant proxy. We show empirically that this is not the case: position carries information beyond what entropy ranking provides.
+
+We collected $74{,}549$ student-generated tokens (Qwen2.5-Math-1.5B on MATH-500) and computed per-token surprise $-\log p_y$. We then asked: among the first $N$ tokens, what fraction fall in each global surprise quartile? A baseline of $25\%$ in each quartile would mean the head is uncorrelated with surprise; full reduction to entropy would mean $100\%$ in Q1.
+
+\begin{table}[h]
+\centering
+\caption{Surprise-quartile distribution among the first $N$ tokens. Baseline (uniform): $25\%$ per quartile. Q1 = top 25\% surprise globally, Q4 = bottom 25\%.}
+\small
+\begin{tabular}{@{}rrrrrrr@{}}
+\toprule
+\textbf{Head $N$} & \textbf{$n$} & \textbf{Q1 (top 25\%)} & \textbf{Q2} & \textbf{Q3} & \textbf{Q4 (bot 25\%)} & \textbf{Q1 enrichment} \\
+\midrule
+25  &  2{,}500 & \textbf{70.0\%} & 14.0\% &  8.6\% &  7.4\% & $2.8\times$ \\
+50  &  5{,}000 & \textbf{61.0\%} & 14.7\% & 11.2\% & 13.1\% & $2.4\times$ \\
+75  &  7{,}500 & 57.0\% & 15.7\% & 11.8\% & 15.6\% & $2.3\times$ \\
+100 &  9{,}991 & 53.2\% & 17.1\% & 12.4\% & 17.3\% & $2.1\times$ \\
+150 & 14{,}941 & 47.1\% & 18.9\% & 13.4\% & 20.5\% & $1.9\times$ \\
+200 & 19{,}856 & 42.6\% & 20.0\% & 14.3\% & 23.1\% & $1.7\times$ \\
+300 & 28{,}958 & 37.5\% & 21.1\% & 15.9\% & 25.5\% & $1.5\times$ \\
+500 & 44{,}553 & 31.8\% & 22.3\% & 18.8\% & 27.1\% & $1.3\times$ \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\begin{table}[h]
+\centering
+\caption{Cumulative coverage: of all tokens above each global surprise threshold, what fraction lies in the first $N$ positions. \textbf{Reverse view}: of all $>p_{95}$ tokens, the median position is $172$, not $50$.}
+\small
+\begin{tabular}{@{}rrrrrr@{}}
+\toprule
+\textbf{Head $N$} & \textbf{\% of all tokens} & \textbf{cover $>p_{75}$} & \textbf{cover $>p_{90}$} & \textbf{cover $>p_{95}$} & \textbf{cover $\sum$ surprise} \\
+\midrule
+50   &  6.7\% & 16.4\% & 21.4\% & 25.1\% & 27.2\% \\
+100  & 13.4\% & 28.5\% & 34.2\% & 38.4\% & 40.2\% \\
+200  & 26.6\% & 45.4\% & 49.8\% & 53.4\% & 54.7\% \\
+500  & 59.8\% & 76.1\% & 78.6\% & 79.8\% & 81.2\% \\
+1000 & 98.5\% & 99.3\% & 99.5\% & 99.5\% & 99.5\% \\
+\bottomrule
+\end{tabular}
+\end{table}
+
+\textbf{Key findings:}
+\begin{itemize}
+\item Head tokens are \emph{enriched} in high surprise but not exclusively high surprise. The first 50 tokens are $2.4\times$ enriched in Q1 but still contain $13.1\%$ Q4 (low-surprise) tokens; the first 100 tokens contain $17.3\%$ Q4. Position and surprise are correlated but not collinear.
+\item Head positions cover only a \emph{fraction} of high-surprise mass. Prefix-100 captures $38.4\%$ of all $>p_{95}$ surprise tokens; even prefix-500 only reaches $79.8\%$. To cover $95\%$ of $>p_{95}$ tokens one would need to keep the first $\sim$$846$ positions---essentially the entire response.
+\item This rules out the hypothesis that prefix-100 wins by being a cheap entropy proxy. If high-entropy selection were the underlying mechanism, top-KL-100 (which by construction covers $>95\%$ of KL signal globally) should match or beat prefix-100. Instead, top-KL-100 underperforms prefix-100 by $7.3$pp avg@4 (\S\ref{sec:method}, Table~\ref{tab:n100}).
+\end{itemize}
+
+The most plausible interpretation is that \emph{position itself} is a load-bearing signal: an early-position low-surprise token can still be load-bearing for the trajectory through autoregressive cascade, while a late-position high-surprise token may already lie on an unrecoverable error path. Entropy ranks tokens by local uncertainty; position ranks them by causal influence on the rest of the generation. Empirically, the latter dominates for distillation utility.
 
 
 \end{document}

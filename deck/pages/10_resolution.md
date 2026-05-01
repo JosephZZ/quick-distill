@@ -1,42 +1,58 @@
-# Resolving the Paradox
+# Position Is Not Reducible to High Entropy
 
-### Why does high-KL selection fail?
+### "Is prefix just a cheap proxy for high-entropy selection?"
+
+If yes, top-entropy-100 should match prefix-100. It doesn't (62.7% vs 65.85%).
+The data show why — head and entropy correlate, but **position carries information beyond entropy**.
 
 <div style="display: flex; gap: 2rem; align-items: flex-start;">
 <div style="width: 50%;">
 
-**High-KL tokens are where the teacher is *confused*, not *superior*:**
+### Surprise quartile distribution among first $N$ tokens
 
-| Token set | Teacher Entropy | KL |
-|-----------|----------------|-----|
-| Top-KL (K=100) | **0.449** (confused) | 4.09 |
-| Prefix (0–99) | 0.235 (confident) | 2.02 |
+Baseline is 25% per quartile (uniform).
 
-<br>
+| Head $N$ | Q1 (top-25%) | Q4 (bottom-25%) | Q1 enrichment |
+|:---:|:---:|:---:|:---:|
+| 25  | **70.0%** | 7.4% | $2.8\times$ |
+| 50  | **61.0%** | 13.1% | $2.4\times$ |
+| 100 | 53.2% | 17.3% | $2.1\times$ |
+| 200 | 42.6% | 23.1% | $1.7\times$ |
+| 500 | 31.8% | 27.1% | $1.3\times$ |
 
-High KL = teacher is uncertain AND disagrees with student
-
-→ **Noisy gradient signal**, not useful correction
+**Head is enriched in high entropy — but not exclusively.** First 100 tokens still contain 17% Q4 (low-surprise) tokens.
 
 </div>
 <div style="width: 50%;">
 
-**Why prefix works despite lower KL:**
+### What head-100 covers, what it misses
 
-1. **Contiguity** — coherent gradient across adjacent tokens
-2. **Strategy tokens** — early positions encode *what approach to take*
-3. **Teacher independence** — teacher hasn't been conditioned by student yet
-4. **Signal quality > signal quantity** — 46% of KL but the *right* 46%
+| Quantity | First 100 |
+|---|:---:|
+| Tokens covered | 13% of total |
+| High-surprise mass ($>p_{75}$) covered | 28.5% |
+| Top-5% surprise covered | **38.4%** |
+| Cumulative $\sum$surprise covered | 40.2% |
+
+**Prefix-100 misses 60%+ of high-surprise mass.** Yet it still beats top-entropy-100, top-KL-100, random-100.
+
+To cover 95% of $>p_{95}$ surprise tokens, you need the first **846 positions** — basically the whole response.
+
+→ Position and entropy are **correlated, not identical**.
+→ Top-entropy selection puts equal weight on a high-surprise late token (which lives on an already-broken trajectory) and a high-surprise early token (which sets the trajectory). Position discounts the former.
+
+</div>
+</div>
 
 <br>
 
-**The lesson:** In on-policy KD, position is a better proxy for signal quality than any information-theoretic measure.
+### Reading: position is a *causal* proxy, not an entropy proxy
 
-</div>
-</div>
+Entropy ranks tokens by **local uncertainty**. Position ranks them by **causal influence on the rest of the generation**. The cascade slide showed why the latter dominates: aligning the planner auto-aligns the executor; aligning the executor doesn't auto-align the planner.
 
 <!--
-[~1.5 min]
-The resolution: high KL ≠ high quality.
-Position is a proxy for teacher independence, which is the actual quality metric.
+[~2 min]
+This is the heart of Sale #2. Position vs entropy is THE conceptual contrast.
+Quartile table makes "head ≠ high entropy" concrete with numbers.
+Right column shows even high-entropy mass is too dispersed for entropy ranking to win.
 -->

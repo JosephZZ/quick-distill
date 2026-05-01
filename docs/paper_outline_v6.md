@@ -259,16 +259,15 @@ Practical guideline: generate ~1000 on-policy trajectories, compute per-position
 
 **LoRA vs. Full Fine-Tune**: LoRA dominates by 8-10pp across all settings. LoRA's implicit regularization is synergistic with truncated loss -- it prevents catastrophic forgetting while the positional mask focuses learning.
 
-**Position limit sweep** (Qwen, math):
+**Position limit sweep** (Qwen, math, n1bs16 LoRA — canonical):
 
-| Pos Limit | % KL | Best avg@4 | % Max Gain |
-|-----------|------|------------|------------|
-| 5 | 5% | 56.50% | 35% |
-| 10 | 8% | 59.50% | 54% |
-| 20 | 12% | 60.20% | 58% |
-| 50 | 26% | 62.45% | 73% |
-| 100 | 44% | 64.25% | 85% |
-| 200 | 66% | 66.75% | 100% |
+| Pos Limit | % KL | Best avg@4 (n1bs16) | Δ vs baseline | Δ vs full-seq (62.35) |
+|-----------|------|---------------------|---------------|-----------------------|
+| 50        | 26%  | **66.65%**          | +15.70        | +4.30 |
+| 100       | 44%  | 65.85%              | +14.90        | +3.50 |
+| 150       | ~55% | **66.65%**          | +15.70        | +4.30 |
+| 200tok    | 66%  | 66.05%              | +15.10        | +3.70 |
+| full-seq  | 100% | 62.35%              | +11.40        | 0 |
 
 **Scaling teacher size**: Qwen 1.5B with 1.7B teacher: 63.15%. With 4B teacher: 68.95% (+5.8pp). With 8B teacher: 67.85%. Optimal teacher size is 4B -- too large a gap may hurt.
 
@@ -326,7 +325,7 @@ We reveal an information-quality paradox in on-policy distillation: the tokens w
 ### A. Full Experimental Results
 - Complete step-by-step tables for all model families, tasks, position limits
 - LoRA vs FullFT comparison tables
-- Batch configuration comparison (n1bs16 vs n16bs16)
+- Batch configuration comparison (n1bs16 vs n16bs16) — see `docs/archive/n16bs16_legacy_results.md`; legacy reference only, not for primary tables
 
 ### B. Token Classification Methodology
 - Regex-based categories, full KL by category x position matrix

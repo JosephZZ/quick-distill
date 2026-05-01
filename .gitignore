@@ -24,3 +24,20 @@ env/
 
 paper/.claudeprism
 paper/.prism
+
+# LaTeX build artifacts
+paper/*.aux
+paper/*.bbl
+paper/*.blg
+paper/*.out
+paper/*.log
+paper/*.toc
+paper/*.fdb_latexmk
+paper/*.fls
+paper/*.synctex.gz
+texput.log
+
+# Slidev build/cache
+deck/node_modules/
+deck/.slidev/
+
