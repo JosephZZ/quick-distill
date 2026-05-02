@@ -897,6 +897,8 @@ def main():
     parser.add_argument("--temperature", type=float, default=0.7)
     parser.add_argument("--lora_r", type=int, default=32)
     parser.add_argument("--lora_alpha", type=int, default=64)
+    parser.add_argument("--lora_target_modules", type=str, default="q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj",
+                        help="Comma-separated linear module names (last segment) to wrap with LoRA.")
     parser.add_argument("--loss_type", type=str, default="reverse_kl",
                         choices=["reverse_kl", "dft_distill", "dft_distill_deadzone"])
     parser.add_argument("--lr", type=float, default=5e-5)
@@ -1149,7 +1151,7 @@ def main():
             r=args.lora_r,
             lora_alpha=args.lora_alpha,
             lora_dropout=0.05,
-            target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+            target_modules=[m.strip() for m in args.lora_target_modules.split(",") if m.strip()],
         )
 
     # Prepare optimizer and scheduler

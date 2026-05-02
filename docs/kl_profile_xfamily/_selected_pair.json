@@ -1,0 +1,8 @@
+{
+  "name": "minicpm3-4B_minicpm4-8B",
+  "student": "openbmb/MiniCPM3-4B",
+  "teacher": "openbmb/MiniCPM4-8B",
+  "student_size": 4.0,
+  "prefix_n": 150,
+  "ratio": 1.5531599252328585
+}
