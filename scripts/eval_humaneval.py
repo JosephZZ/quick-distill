@@ -11,6 +11,27 @@ try:
 except Exception:
     pass
 
+# --- Gemma3 tokenizer shim (transformers 4.57 + vllm 0.8.5 incompatibility) ---
+# Gemma3Processor.__init__ reads tokenizer.image_token_id which GemmaTokenizerFast
+# does not expose as an attribute. We monkey-patch it so text-only eval does not break.
+try:
+    from transformers import GemmaTokenizerFast
+    _IMG_TOK = "<image_soft_token>"
+    def _image_token_id(self):
+        tid = self.convert_tokens_to_ids(_IMG_TOK)
+        return tid if tid is not None and tid != self.unk_token_id else -1
+    if not hasattr(GemmaTokenizerFast, "image_token_id"):
+        GemmaTokenizerFast.image_token_id = property(_image_token_id)
+    try:
+        from transformers.models.gemma.tokenization_gemma_fast import GemmaTokenizerFast as _G
+        if not hasattr(_G, "image_token_id"):
+            _G.image_token_id = property(_image_token_id)
+    except Exception:
+        pass
+except Exception as _e:
+    print(f"[shim] gemma3 tokenizer patch skipped: {_e}")
+# --- end shim ---
+
 from vllm import LLM, SamplingParams
 from evalplus.data import get_human_eval_plus, get_mbpp_plus
 

@@ -1,0 +1,23 @@
+{
+  "tag": "bench-fullseq-math",
+  "task": "math",
+  "dataset": "AI-MO/NuminaMath-CoT",
+  "student": "Qwen/Qwen2.5-Math-1.5B",
+  "teacher": "Qwen/Qwen3-1.7B",
+  "position_limit": 0,
+  "token_select_mode": "prefix",
+  "bs": 16,
+  "mini_bs": 1,
+  "n_samples": 1,
+  "n_logged_steps": 6,
+  "n_timed_steps_used": 5,
+  "median_sec_per_step": {
+    "generation": 107.0,
+    "teacher_score": 6.0,
+    "train_fwd_bwd": 8.8,
+    "total": 121.8
+  },
+  "peak_gpu_mem_mib": 35888,
+  "peak_gpu_mem_gb": 35.05,
+  "note": "Measured on GPU0 RTX A6000 48GB single-GPU; medians drop step<2 to skip warmup."
+}

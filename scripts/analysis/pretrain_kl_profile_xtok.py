@@ -35,6 +35,9 @@ def main():
     ap.add_argument("--max_new_tokens", type=int, default=512)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--output", required=True)
+    ap.add_argument("--dataset", default="AI-MO/NuminaMath-CoT")
+    ap.add_argument("--problem_field", default="problem")
+    ap.add_argument("--split", default="train")
     args = ap.parse_args()
 
     device = "cuda:0"
@@ -50,8 +53,8 @@ def main():
     print(f"Student: {args.student_model} (thinking={s_thinking}) vocab={s_tok.vocab_size}")
     print(f"Teacher: {args.teacher_model} (thinking={t_thinking}) vocab={t_tok.vocab_size}")
 
-    ds = load_dataset("AI-MO/NuminaMath-CoT", split="train")
-    problems = [ds[i]["problem"] for i in range(args.num_problems)]
+    ds = load_dataset(args.dataset, split=args.split)
+    problems = [ds[i][args.problem_field] for i in range(min(args.num_problems, len(ds)))]
 
     # Phase 1: student generation + sampled-token logprob
     print(f"\n[Phase 1] Generating with student ({args.num_problems} problems)...")

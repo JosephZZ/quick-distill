@@ -113,6 +113,7 @@ def phase2_score(tokenizer, problems, trajectories, device, output_dir):
     kl_fwd_sum = np.zeros(max_len)      # KL(p_t || p_s)
     kl_rev_sum = np.zeros(max_len)      # KL(p_s || p_t)
     teacher_entropy_sum = np.zeros(max_len)
+    student_entropy_sum = np.zeros(max_len)
     teacher_top1_prob_sum = np.zeros(max_len)
     agreement_sum = np.zeros(max_len)
     counts = np.zeros(max_len)
@@ -185,6 +186,10 @@ def phase2_score(tokenizer, problems, trajectories, device, output_dir):
             entropy = -torch.sum(t_p[mask_t] * t_lp_dist[mask_t]).item()
             teacher_entropy_sum[j] += entropy
 
+            # 4b. Student entropy
+            s_entropy = -torch.sum(s_p[mask_s] * s_lp_dist[mask_s]).item()
+            student_entropy_sum[j] += s_entropy
+
             # 5. Teacher top-1 prob
             teacher_top1_prob_sum[j] += torch.max(t_p).item()
 
@@ -229,6 +234,7 @@ def phase2_score(tokenizer, problems, trajectories, device, output_dir):
             "kl_forward": float(kl_fwd_sum[pos] / c),
             "kl_reverse": float(kl_rev_sum[pos] / c),
             "teacher_entropy": float(teacher_entropy_sum[pos] / c),
+            "student_entropy": float(student_entropy_sum[pos] / c),
             "teacher_top1_prob": float(teacher_top1_prob_sum[pos] / c),
             "agreement_rate": float(agreement_sum[pos] / c),
             "count": int(c),
@@ -246,7 +252,7 @@ def phase2_score(tokenizer, problems, trajectories, device, output_dir):
         (600, 700), (700, 800), (800, 900), (900, 1000),
         (1000, 1200), (1200, 1500), (1500, 2000),
     ]
-    fields = ["logprob_gap", "kl_forward", "kl_reverse", "teacher_entropy", "teacher_top1_prob", "agreement_rate"]
+    fields = ["logprob_gap", "kl_forward", "kl_reverse", "teacher_entropy", "student_entropy", "teacher_top1_prob", "agreement_rate"]
     range_summary = {}
     for lo, hi in ranges:
         pos_keys = [str(p) for p in range(lo, min(hi, max_len)) if str(p) in metrics]

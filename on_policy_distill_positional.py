@@ -926,7 +926,7 @@ def main():
         default="prefix",
         choices=["prefix", "top_kl", "top_entropy_student", "top_entropy_teacher", "random",
                  "middle", "last", "reopold", "ent_and", "ent_or", "ent_kl_and", "format_mask",
-                 "hi_kl_hi_surp", "hi_kl_hi_surp_topk", "hi_kl_hi_ent_topk", "hi_surp", "hi_ent"],
+                 "hi_kl_hi_surp", "hi_kl_hi_surp_topk", "hi_kl_hi_ent_topk", "raw_product_topk", "hi_surp", "hi_ent"],
         help="Token selection: prefix, top_kl, top_entropy_student/teacher, random, middle, last, "
              "reopold, ent_and (teacher*student entropy product), ent_or (teacher+student entropy sum), "
              "ent_kl_and (high entropy AND high KL), "
@@ -1004,7 +1004,7 @@ def main():
     _fullseq_modes = ("prefix", "reopold", "ent_and", "ent_or", "ent_kl_and", "format_mask",
                       "hi_kl_hi_surp", "hi_surp", "hi_ent")
     if args.token_select_mode not in _fullseq_modes and args.position_limit <= 0:
-        if args.token_select_mode == "hi_kl_hi_ent_topk" and args.top_k_frac > 0.0:
+        if args.token_select_mode in ("hi_kl_hi_ent_topk", "raw_product_topk") and args.top_k_frac > 0.0:
             pass  # fraction-based K is valid
         else:
             raise ValueError("For non-prefix token selection modes, --position_limit must be > 0 (used as top-K).")
@@ -1809,6 +1809,51 @@ def main():
                             for i, rl in enumerate(mb_resp_lens)
                         ]
                         print(f"[hi_kl_hi_ent_topk] mb {mb_size}x{max_resp_len}: "
+                              f"valid={n_valid} kept={n_kept} "
+                              f"({n_kept/max(n_valid,1)*100:.1f}% of valid)  "
+                              f"top_k_frac={args.top_k_frac}  K_per_traj={ks_used}")
+                elif args.token_select_mode == "raw_product_topk":
+                    # Per-trajectory top-K by joint score = KL(s||t) * H_s * H_t.
+                    # All three factors are non-negative nats, so raw product ranks
+                    # positions where the teacher disagrees, the student is unsure,
+                    # AND the teacher has a meaningful alternative distribution.
+                    # K = args.position_limit, or floor(rlen * top_k_frac) if set.
+                    with torch.no_grad():
+                        # Reverse KL per position (full vocab)
+                        ps = torch.exp(s_log_probs_resp.detach())
+                        s_lp_full = s_log_probs_resp.detach()
+                        t_lp_full = t_log_probs_padded
+                        mask_s = ps > 1e-10
+                        # KL(s||t) = sum p_s (lp_s - lp_t), computed safely
+                        kl_rev = (ps * (s_lp_full - t_lp_full)).sum(dim=-1).clamp(min=0.0)  # [mb, T]
+                        # Student entropy
+                        ent_s = -(ps * s_lp_full).sum(dim=-1).clamp(min=0.0)  # [mb, T]
+                        # Teacher entropy
+                        pt = torch.exp(t_lp_full)
+                        ent_t = -(pt * t_lp_full).sum(dim=-1).clamp(min=0.0)  # [mb, T]
+                        score = kl_rev * ent_s * ent_t
+                        score[~resp_valid_mask] = float('-inf')
+                        for i in range(mb_size):
+                            rlen = mb_resp_lens[i]
+                            if args.top_k_frac > 0.0:
+                                k = int(rlen * args.top_k_frac)
+                            else:
+                                k = mb_distill_counts[i]
+                            if k > 0 and rlen > 0:
+                                k_eff = min(k, rlen)
+                                topk_idx = torch.topk(
+                                    score[i, :rlen], k=k_eff, largest=True
+                                ).indices
+                                sel_mask[i].scatter_(0, topk_idx, True)
+                    if step <= 1 and mb_start == 0:
+                        n_valid = int(resp_valid_mask.sum().item())
+                        n_kept  = int(sel_mask.sum().item())
+                        ks_used = [
+                            int(rl * args.top_k_frac) if args.top_k_frac > 0.0
+                            else int(mb_distill_counts[i])
+                            for i, rl in enumerate(mb_resp_lens)
+                        ]
+                        print(f"[raw_product_topk] mb {mb_size}x{max_resp_len}: "
                               f"valid={n_valid} kept={n_kept} "
                               f"({n_kept/max(n_valid,1)*100:.1f}% of valid)  "
                               f"top_k_frac={args.top_k_frac}  K_per_traj={ks_used}")

@@ -1,0 +1,56 @@
+{
+  "prefix": {
+    "kl_coverage_pct": 45.59561667576084,
+    "ent_overlap_pct": 33.51020408163265,
+    "avg_position": 49.5,
+    "contiguous": true
+  },
+  "top_kl": {
+    "kl_coverage_pct": 93.16583515681907,
+    "ent_overlap_pct": 68.57142857142857,
+    "avg_position": 193.1859190026108,
+    "contiguous": false
+  },
+  "ent_student": {
+    "kl_coverage_pct": 67.01585337159301,
+    "ent_overlap_pct": 94.81632653061224,
+    "avg_position": 193.94693662682357,
+    "contiguous": false
+  },
+  "ent_teacher": {
+    "kl_coverage_pct": 50.484353944085335,
+    "ent_overlap_pct": 64.0204081632653,
+    "avg_position": 213.4202060310208,
+    "contiguous": false
+  },
+  "ent_and": {
+    "kl_coverage_pct": 57.32913805167049,
+    "ent_overlap_pct": 78.89795918367346,
+    "avg_position": 203.15673376589405,
+    "contiguous": false
+  },
+  "ent_or": {
+    "kl_coverage_pct": 64.29203187167019,
+    "ent_overlap_pct": 81.14285714285714,
+    "avg_position": 203.07204265983736,
+    "contiguous": false
+  },
+  "random": {
+    "kl_coverage_pct": 21.121969508463312,
+    "ent_overlap_pct": 19.79591836734694,
+    "avg_position": 238.8893877924705,
+    "contiguous": false
+  },
+  "middle": {
+    "kl_coverage_pct": 15.793683722111316,
+    "ent_overlap_pct": 16.897959183673468,
+    "avg_position": 241.1530612244898,
+    "contiguous": true
+  },
+  "last": {
+    "kl_coverage_pct": 13.881423734473096,
+    "ent_overlap_pct": 13.16326530612245,
+    "avg_position": 432.88775510204084,
+    "contiguous": true
+  }
+}

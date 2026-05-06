@@ -1,0 +1,16 @@
+{
+  "exp1": {
+    "label": "Student prefix \u2192 Teacher cont",
+    "n_samples": 4,
+    "avg_at_k": 62.7,
+    "maj_at_k": 65.8,
+    "pass_at_k": 74.2
+  },
+  "exp2": {
+    "label": "Teacher prefix \u2192 Student cont",
+    "n_samples": 4,
+    "avg_at_k": 47.0,
+    "maj_at_k": 55.6,
+    "pass_at_k": 67.8
+  }
+}
